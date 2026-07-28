@@ -8,8 +8,7 @@ load_dotenv()
 class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
 
-    amadeus_client_id: str = os.getenv("AMADEUS_CLIENT_ID", "")
-    amadeus_client_secret: str = os.getenv("AMADEUS_CLIENT_SECRET", "")
+    travelpayouts_api_key: str = os.getenv("TRAVELPAYOUTS_API_KEY", "")
 
     booking_rapidapi_key: str = os.getenv("BOOKING_RAPIDAPI_KEY", "")
     google_maps_api_key: str = os.getenv("GOOGLE_MAPS_API_KEY", "")

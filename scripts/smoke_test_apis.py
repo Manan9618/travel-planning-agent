@@ -46,37 +46,27 @@ def check_openai() -> CheckResult:
         return CheckResult("OpenAI", "FAIL", str(exc))
 
 
-def check_amadeus() -> CheckResult:
-    if not settings.amadeus_client_id or not settings.amadeus_client_secret:
-        return CheckResult("Amadeus", "SKIP", "AMADEUS_CLIENT_ID/SECRET not set")
+def check_travelpayouts() -> CheckResult:
+    if not settings.travelpayouts_api_key:
+        return CheckResult("TravelPayouts", "SKIP", "TRAVELPAYOUTS_API_KEY not set")
     try:
-        token_resp = requests.post(
-            "https://test.api.amadeus.com/v1/security/oauth2/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": settings.amadeus_client_id,
-                "client_secret": settings.amadeus_client_secret,
-            },
+        resp = requests.get(
+            "https://api.travelpayouts.com/v1/prices/cheap",
+            params={"origin": "LON", "destination": "PAR", "token": settings.travelpayouts_api_key},
             timeout=TIMEOUT,
         )
-        if token_resp.status_code != 200:
-            return CheckResult(
-                "Amadeus", "FAIL", f"token HTTP {token_resp.status_code}: {token_resp.text[:200]}"
-            )
-        access_token = token_resp.json()["access_token"]
-        search_resp = requests.get(
-            "https://test.api.amadeus.com/v1/reference-data/locations",
-            params={"keyword": "PAR", "subType": "CITY"},
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=TIMEOUT,
+        body = (
+            resp.json()
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else {}
         )
-        if search_resp.status_code == 200:
-            return CheckResult("Amadeus", "PASS", "authenticated and queried city search")
+        if resp.status_code == 200 and body.get("success"):
+            return CheckResult("TravelPayouts", "PASS", "fetched cheap fares LON->PAR")
         return CheckResult(
-            "Amadeus", "FAIL", f"search HTTP {search_resp.status_code}: {search_resp.text[:200]}"
+            "TravelPayouts", "FAIL", f"HTTP {resp.status_code}: {body or resp.text[:200]}"
         )
-    except (requests.RequestException, KeyError) as exc:
-        return CheckResult("Amadeus", "FAIL", str(exc))
+    except requests.RequestException as exc:
+        return CheckResult("TravelPayouts", "FAIL", str(exc))
 
 
 def check_google_maps() -> CheckResult:
@@ -150,7 +140,7 @@ def check_tavily() -> CheckResult:
 def main() -> int:
     checks = [
         check_openai,
-        check_amadeus,
+        check_travelpayouts,
         check_google_maps,
         check_openweathermap,
         check_serper,
