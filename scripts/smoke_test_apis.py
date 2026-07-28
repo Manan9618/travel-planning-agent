@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 import requests
 
@@ -21,6 +22,7 @@ sys.path.insert(0, "src")
 from travel_agent.config import settings  # noqa: E402
 
 TIMEOUT = 10
+BOOKING_RAPIDAPI_HOST = "booking-com15.p.rapidapi.com"
 
 
 @dataclass
@@ -67,6 +69,65 @@ def check_travelpayouts() -> CheckResult:
         )
     except requests.RequestException as exc:
         return CheckResult("TravelPayouts", "FAIL", str(exc))
+
+
+def check_booking_rapidapi() -> CheckResult:
+    if not settings.booking_rapidapi_key:
+        return CheckResult("Booking.com (RapidAPI)", "SKIP", "BOOKING_RAPIDAPI_KEY not set")
+    headers = {
+        "Content-Type": "application/json",
+        "x-rapidapi-host": BOOKING_RAPIDAPI_HOST,
+        "x-rapidapi-key": settings.booking_rapidapi_key,
+    }
+    try:
+        dest_resp = requests.get(
+            f"https://{BOOKING_RAPIDAPI_HOST}/api/v1/hotels/searchDestination",
+            params={"query": "Paris"},
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+        dest_body = dest_resp.json()
+        if dest_resp.status_code != 200 or not dest_body.get("status"):
+            return CheckResult(
+                "Booking.com (RapidAPI)",
+                "FAIL",
+                f"destination HTTP {dest_resp.status_code}: {dest_body}",
+            )
+        city = next(
+            (d for d in dest_body["data"] if d.get("dest_type") == "city"), dest_body["data"][0]
+        )
+
+        arrival = date.today() + timedelta(days=45)
+        departure = arrival + timedelta(days=2)
+        hotels_resp = requests.get(
+            f"https://{BOOKING_RAPIDAPI_HOST}/api/v1/hotels/searchHotels",
+            params={
+                "dest_id": city["dest_id"],
+                "search_type": city["search_type"].upper(),
+                "adults": 1,
+                "room_qty": 1,
+                "page_number": 1,
+                "units": "metric",
+                "temperature_unit": "c",
+                "languagecode": "en-us",
+                "currency_code": "USD",
+                "arrival_date": arrival.isoformat(),
+                "departure_date": departure.isoformat(),
+            },
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+        hotels_body = hotels_resp.json()
+        if hotels_resp.status_code == 200 and hotels_body.get("status"):
+            n = len(hotels_body.get("data", {}).get("hotels", []))
+            return CheckResult("Booking.com (RapidAPI)", "PASS", f"found {n} hotels in Paris")
+        return CheckResult(
+            "Booking.com (RapidAPI)",
+            "FAIL",
+            f"search HTTP {hotels_resp.status_code}: {hotels_body}",
+        )
+    except (requests.RequestException, KeyError, IndexError) as exc:
+        return CheckResult("Booking.com (RapidAPI)", "FAIL", str(exc))
 
 
 def check_google_maps() -> CheckResult:
@@ -141,6 +202,7 @@ def main() -> int:
     checks = [
         check_openai,
         check_travelpayouts,
+        check_booking_rapidapi,
         check_google_maps,
         check_openweathermap,
         check_serper,
