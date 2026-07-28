@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit
+.PHONY: install fmt lint test cov precommit smoke
 
 install:
 	poetry install
@@ -20,3 +20,6 @@ cov:
 
 precommit:
 	poetry run pre-commit run --all-files
+
+smoke:
+	poetry run python scripts/smoke_test_apis.py
