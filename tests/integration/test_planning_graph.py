@@ -20,6 +20,15 @@ from travel_agent.models.core import (
     TravelPreferences,
     WeatherForecast,
 )
+from travel_agent.tools.itinerary_builder import ItineraryBuilder
+
+
+class FixedTravelTime:
+    """No-network stand-in for TravelTimeEstimator, used only to keep the
+    build_itinerary step offline in these graph-wiring tests."""
+
+    def minutes_between(self, olat, olng, dlat, dlng, mode="driving"):
+        return 15
 
 
 class DeterministicSupervisor:
@@ -108,6 +117,7 @@ def _build_test_graph(checkpointer, flight_tool=None):
         attraction_tool=StubAttractionTool(),
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
+        itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -144,7 +154,10 @@ def test_full_graph_run_populates_every_field():
         "find_attractions",
         "find_restaurants",
         "check_weather",
+        "build_itinerary",
     }
+    assert result["itinerary"] is not None
+    assert len(result["itinerary"]["days"]) == 5
 
 
 def test_graph_terminates_and_does_not_loop_forever():
@@ -168,9 +181,12 @@ def test_tool_failure_is_captured_without_halting_the_graph():
 
     assert result["flights"] == []
     assert any("search_flights" in e for e in result["errors"])
-    # every other step still completed despite the flight failure
+    # every other step still completed despite the flight failure, including
+    # itinerary building (which just proceeds without a flight item on Day 1)
     assert "search_hotels" in result["completed_steps"]
     assert "find_attractions" in result["completed_steps"]
+    assert "build_itinerary" in result["completed_steps"]
+    assert result["itinerary"] is not None
 
 
 def test_state_persists_across_fresh_connections():
@@ -216,6 +232,7 @@ def test_no_origin_skips_flights_but_completes_everything_else():
         attraction_tool=StubAttractionTool(),
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
+        itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -228,3 +245,5 @@ def test_no_origin_skips_flights_but_completes_everything_else():
     assert result.get("flights", []) == []
     assert "search_hotels" in result["completed_steps"]
     assert "check_weather" in result["completed_steps"]
+    assert "build_itinerary" in result["completed_steps"]
+    assert result["itinerary"] is not None

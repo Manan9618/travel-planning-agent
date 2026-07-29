@@ -51,6 +51,25 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] 34 new unit/integration tests (state routing, supervisor, each node, and the
       full compiled graph with stubbed tools)
 
+**Phase 2, Week 5 — Itinerary Builder v1: Time Slot Assignment** — done
+
+- [x] `ItineraryBuilder`: arrival day (flight → transfer → check-in → dinner if time
+      allows), full middle days (morning/lunch/afternoon/dinner), departure day
+      (checkout → airport transfer)
+- [x] `TravelTimeEstimator`: real Google Distance Matrix lookups between consecutive
+      activities, cached, with a flat-minute fallback on any failure
+- [x] Fixed, category-appropriate time windows stand in for real opening-hours data
+      (neither Serper nor Booking.com actually supply it); travel time can push a
+      booking later within its window or skip it entirely if it can't fit
+- [x] Caught and fixed a real bug during live testing: TravelPayouts returns the
+      cheapest fare found *near* the requested month, not on the exact date, so the
+      builder was anchoring Day 1 to the flight's own (wrong) date. Fixed by using
+      only the flight's time-of-day, anchored to the itinerary's actual start date
+- [x] Wired into the LangGraph as a final `build_itinerary` step, run once every
+      search tool has completed
+- [x] Live-tested end-to-end against all 3 required trip types (city tour, beach
+      holiday, adventure trip) plus 25 new unit tests
+
 ## Setup
 
 ```bash

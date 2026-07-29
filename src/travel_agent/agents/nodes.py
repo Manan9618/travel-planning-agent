@@ -14,9 +14,17 @@ from collections.abc import Callable
 from datetime import date, timedelta
 
 from travel_agent.agents.state import PlanningState, PlanningStep
+from travel_agent.models.core import (
+    Attraction,
+    FlightOption,
+    HotelOption,
+    Restaurant,
+    TravelPreferences,
+)
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
+from travel_agent.tools.itinerary_builder import ItineraryBuilder
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
@@ -179,6 +187,36 @@ def make_check_weather_node(tool: WeatherCheckerTool) -> Node:
                 "weather": [],
                 "completed_steps": [PlanningStep.CHECK_WEATHER.value],
                 "errors": [f"check_weather: {exc}"],
+            }
+
+    return node
+
+
+def make_build_itinerary_node(builder: ItineraryBuilder) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            hotels = state.get("hotels") or []
+            if not hotels:
+                raise ValueError("no hotel available to build an itinerary from")
+            prefs = TravelPreferences(**state["preferences"])
+            hotel = HotelOption(**hotels[0])
+            attractions = [Attraction(**a) for a in state.get("attractions", [])]
+            restaurants = [Restaurant(**r) for r in state.get("restaurants", [])]
+            flights = state.get("flights") or []
+            flight = FlightOption(**flights[0]) if flights else None
+
+            itinerary = builder.build(prefs, hotel, attractions, restaurants, flight=flight)
+            return {
+                "itinerary": itinerary.model_dump(mode="json"),
+                "completed_steps": [PlanningStep.BUILD_ITINERARY.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("build_itinerary failed: %s", exc)
+            return {
+                "itinerary": None,
+                "completed_steps": [PlanningStep.BUILD_ITINERARY.value],
+                "errors": [f"build_itinerary: {exc}"],
             }
 
     return node

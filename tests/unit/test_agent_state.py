@@ -80,3 +80,36 @@ def test_all_steps_completed_without_origin_and_dates_returns_done():
         ],
     }
     assert determine_valid_steps(state) == [PlanningStep.DONE]
+
+
+def test_all_search_steps_done_with_hotels_present_routes_to_build_itinerary():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.BUILD_ITINERARY]
+
+
+def test_build_itinerary_already_completed_returns_done():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.DONE]

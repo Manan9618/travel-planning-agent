@@ -2,6 +2,7 @@ from datetime import date
 from unittest.mock import MagicMock
 
 from travel_agent.agents.nodes import (
+    make_build_itinerary_node,
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
@@ -26,6 +27,7 @@ BASE_PREFS = {
     "duration_days": 5,
     "travelers": 2,
     "budget_total": 2000,
+    "raw_text": "5 days in Paris from Boston",
 }
 
 
@@ -208,3 +210,84 @@ def test_check_weather_node_uses_duration_days_when_end_date_missing():
     node({"preferences": prefs})
     start, end = tool.get_forecast.call_args[0][1], tool.get_forecast.call_args[0][2]
     assert (end - start).days == 4  # 5-day trip inclusive of start day
+
+
+# --- build_itinerary ---------------------------------------------------
+
+
+def _state_with_full_search_results():
+    return {
+        "preferences": BASE_PREFS,
+        "hotels": [
+            HotelOption(
+                name="Hotel X", address="Paris, France", lat=48.85, lng=2.35, price_per_night=100
+            ).model_dump(mode="json")
+        ],
+        "flights": [
+            FlightOption(
+                airline="AF",
+                origin="BOS",
+                destination="PAR",
+                departure_time="2026-09-01T02:00:00",
+                arrival_time="2026-09-01T14:00:00",
+                duration_minutes=420,
+                price=650,
+            ).model_dump(mode="json")
+        ],
+        "attractions": [Attraction(name="Louvre", lat=48.86, lng=2.33).model_dump(mode="json")],
+        "restaurants": [Restaurant(name="Le Cafe", lat=48.85, lng=2.35).model_dump(mode="json")],
+    }
+
+
+def test_build_itinerary_node_success():
+    builder = MagicMock()
+    fake_itinerary = MagicMock()
+    fake_itinerary.model_dump.return_value = {"days": []}
+    builder.build.return_value = fake_itinerary
+
+    node = make_build_itinerary_node(builder)
+    result = node(_state_with_full_search_results())
+
+    assert result["itinerary"] == {"days": []}
+    assert result["completed_steps"] == ["build_itinerary"]
+    assert result["errors"] == []
+    builder.build.assert_called_once()
+
+
+def test_build_itinerary_node_no_hotel_records_error():
+    builder = MagicMock()
+    state = _state_with_full_search_results()
+    state["hotels"] = []
+    node = make_build_itinerary_node(builder)
+    result = node(state)
+
+    assert result["itinerary"] is None
+    assert result["completed_steps"] == ["build_itinerary"]
+    assert "no hotel available" in result["errors"][0]
+    builder.build.assert_not_called()
+
+
+def test_build_itinerary_node_no_flight_still_succeeds():
+    builder = MagicMock()
+    fake_itinerary = MagicMock()
+    fake_itinerary.model_dump.return_value = {"days": []}
+    builder.build.return_value = fake_itinerary
+
+    state = _state_with_full_search_results()
+    state["flights"] = []
+    node = make_build_itinerary_node(builder)
+    result = node(state)
+
+    assert result["errors"] == []
+    call_kwargs = builder.build.call_args.kwargs
+    assert call_kwargs["flight"] is None
+
+
+def test_build_itinerary_node_builder_exception_records_error():
+    builder = MagicMock()
+    builder.build.side_effect = RuntimeError("scheduling failed")
+    node = make_build_itinerary_node(builder)
+    result = node(_state_with_full_search_results())
+
+    assert result["itinerary"] is None
+    assert "scheduling failed" in result["errors"][0]

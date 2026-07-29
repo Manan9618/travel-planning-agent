@@ -17,6 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from travel_agent.agents.nodes import (
+    make_build_itinerary_node,
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
@@ -29,6 +30,7 @@ from travel_agent.agents.supervisor import SupervisorAgent
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
+from travel_agent.tools.itinerary_builder import ItineraryBuilder
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
@@ -40,6 +42,7 @@ _WORKER_STEPS = [
     PlanningStep.FIND_ATTRACTIONS,
     PlanningStep.FIND_RESTAURANTS,
     PlanningStep.CHECK_WEATHER,
+    PlanningStep.BUILD_ITINERARY,
 ]
 
 
@@ -76,6 +79,7 @@ def build_planning_graph(
     attraction_tool: AttractionFinderTool | None = None,
     restaurant_tool: RestaurantFinderTool | None = None,
     weather_tool: WeatherCheckerTool | None = None,
+    itinerary_builder: ItineraryBuilder | None = None,
     supervisor: SupervisorAgent | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
@@ -85,6 +89,7 @@ def build_planning_graph(
     attraction_tool = attraction_tool or AttractionFinderTool()
     restaurant_tool = restaurant_tool or RestaurantFinderTool()
     weather_tool = weather_tool or WeatherCheckerTool()
+    itinerary_builder = itinerary_builder or ItineraryBuilder()
     supervisor = supervisor or SupervisorAgent()
 
     graph = StateGraph(PlanningState)
@@ -95,6 +100,7 @@ def build_planning_graph(
     graph.add_node(PlanningStep.FIND_ATTRACTIONS.value, make_find_attractions_node(attraction_tool))
     graph.add_node(PlanningStep.FIND_RESTAURANTS.value, make_find_restaurants_node(restaurant_tool))
     graph.add_node(PlanningStep.CHECK_WEATHER.value, make_check_weather_node(weather_tool))
+    graph.add_node(PlanningStep.BUILD_ITINERARY.value, make_build_itinerary_node(itinerary_builder))
 
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(

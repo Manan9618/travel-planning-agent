@@ -19,6 +19,7 @@ class PlanningStep(str, Enum):
     FIND_ATTRACTIONS = "find_attractions"
     FIND_RESTAURANTS = "find_restaurants"
     CHECK_WEATHER = "check_weather"
+    BUILD_ITINERARY = "build_itinerary"
     DONE = "done"
 
 
@@ -30,6 +31,7 @@ class PlanningState(TypedDict, total=False):
     attractions: list[dict]
     restaurants: list[dict]
     weather: list[dict]
+    itinerary: dict | None
     next_step: str
     completed_steps: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
@@ -62,5 +64,9 @@ def determine_valid_steps(state: PlanningState) -> list[PlanningStep]:
         remaining.append(PlanningStep.FIND_RESTAURANTS)
     if PlanningStep.CHECK_WEATHER.value not in completed and prefs.get("start_date"):
         remaining.append(PlanningStep.CHECK_WEATHER)
+    if remaining:
+        return remaining
 
-    return remaining or [PlanningStep.DONE]
+    if PlanningStep.BUILD_ITINERARY.value not in completed and state.get("hotels"):
+        return [PlanningStep.BUILD_ITINERARY]
+    return [PlanningStep.DONE]
