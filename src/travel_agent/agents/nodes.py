@@ -1,0 +1,184 @@
+"""Node factories wrapping each tool for the planning StateGraph — Week 4 deliverable.
+
+Every node catches exceptions from its tool call rather than letting them propagate
+and crash the graph run: a failure is recorded in `errors` and the step is marked
+`completed` regardless, so the supervisor doesn't retry it forever. The tools
+themselves already retry transient failures and fall back to mock data internally
+(Weeks 2-3); this is a second, coarser safety net at the orchestration layer.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from datetime import date, timedelta
+
+from travel_agent.agents.state import PlanningState, PlanningStep
+from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.flight_search import FlightSearchTool
+from travel_agent.tools.hotel_search import HotelSearchTool
+from travel_agent.tools.preference_parser import PreferenceParser
+from travel_agent.tools.restaurant_finder import RestaurantFinderTool
+from travel_agent.tools.weather_checker import WeatherCheckerTool
+from travel_agent.utils.iata import city_to_iata
+
+logger = logging.getLogger(__name__)
+
+Node = Callable[[PlanningState], dict]
+
+DEFAULT_TRIP_LEAD_DAYS = 30
+DEFAULT_TRIP_LENGTH_DAYS = 4
+
+
+def _trip_dates(prefs: dict) -> tuple[date, date]:
+    start = date.fromisoformat(prefs["start_date"]) if prefs.get("start_date") else None
+    end = date.fromisoformat(prefs["end_date"]) if prefs.get("end_date") else None
+    if start is None:
+        start = date.today() + timedelta(days=DEFAULT_TRIP_LEAD_DAYS)
+    if end is None:
+        duration = prefs.get("duration_days") or (DEFAULT_TRIP_LENGTH_DAYS + 1)
+        end = start + timedelta(days=duration - 1)  # duration_days is inclusive of start day
+    return start, end
+
+
+def make_parse_preferences_node(parser: PreferenceParser) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            prefs = parser.parse(state["raw_text"])
+            return {
+                "preferences": prefs.model_dump(mode="json"),
+                "completed_steps": [PlanningStep.PARSE_PREFERENCES.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("parse_preferences failed: %s", exc)
+            return {
+                "preferences": None,
+                "completed_steps": [PlanningStep.PARSE_PREFERENCES.value],
+                "errors": [f"parse_preferences: {exc}"],
+            }
+
+    return node
+
+
+def make_search_flights_node(tool: FlightSearchTool) -> Node:
+    def node(state: PlanningState) -> dict:
+        prefs = state["preferences"]
+        try:
+            origin_code = city_to_iata(prefs["origin"])
+            dest_code = city_to_iata(prefs["destination"])
+            if not origin_code or not dest_code:
+                raise ValueError(
+                    f"no IATA mapping for {prefs['origin']!r} or {prefs['destination']!r}"
+                )
+            depart, ret = _trip_dates(prefs)
+            results = tool.search(
+                origin_code,
+                dest_code,
+                depart,
+                ret,
+                max_results=5,
+                max_price=prefs.get("budget_total"),
+            )
+            return {
+                "flights": [f.model_dump(mode="json") for f in results],
+                "completed_steps": [PlanningStep.SEARCH_FLIGHTS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("search_flights failed: %s", exc)
+            return {
+                "flights": [],
+                "completed_steps": [PlanningStep.SEARCH_FLIGHTS.value],
+                "errors": [f"search_flights: {exc}"],
+            }
+
+    return node
+
+
+def make_search_hotels_node(tool: HotelSearchTool) -> Node:
+    def node(state: PlanningState) -> dict:
+        prefs = state["preferences"]
+        try:
+            check_in, check_out = _trip_dates(prefs)
+            results = tool.search(
+                prefs["destination"], check_in, check_out, adults=prefs.get("travelers", 1)
+            )
+            return {
+                "hotels": [h.model_dump(mode="json") for h in results],
+                "completed_steps": [PlanningStep.SEARCH_HOTELS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("search_hotels failed: %s", exc)
+            return {
+                "hotels": [],
+                "completed_steps": [PlanningStep.SEARCH_HOTELS.value],
+                "errors": [f"search_hotels: {exc}"],
+            }
+
+    return node
+
+
+def make_find_attractions_node(tool: AttractionFinderTool) -> Node:
+    def node(state: PlanningState) -> dict:
+        prefs = state["preferences"]
+        try:
+            results = tool.search(prefs["destination"], interests=prefs.get("interests"))
+            return {
+                "attractions": [a.model_dump(mode="json") for a in results],
+                "completed_steps": [PlanningStep.FIND_ATTRACTIONS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("find_attractions failed: %s", exc)
+            return {
+                "attractions": [],
+                "completed_steps": [PlanningStep.FIND_ATTRACTIONS.value],
+                "errors": [f"find_attractions: {exc}"],
+            }
+
+    return node
+
+
+def make_find_restaurants_node(tool: RestaurantFinderTool) -> Node:
+    def node(state: PlanningState) -> dict:
+        prefs = state["preferences"]
+        try:
+            results = tool.search(prefs["destination"])
+            return {
+                "restaurants": [r.model_dump(mode="json") for r in results],
+                "completed_steps": [PlanningStep.FIND_RESTAURANTS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("find_restaurants failed: %s", exc)
+            return {
+                "restaurants": [],
+                "completed_steps": [PlanningStep.FIND_RESTAURANTS.value],
+                "errors": [f"find_restaurants: {exc}"],
+            }
+
+    return node
+
+
+def make_check_weather_node(tool: WeatherCheckerTool) -> Node:
+    def node(state: PlanningState) -> dict:
+        prefs = state["preferences"]
+        try:
+            start, end = _trip_dates(prefs)
+            results = tool.get_forecast(prefs["destination"], start, end)
+            return {
+                "weather": [w.model_dump(mode="json") for w in results],
+                "completed_steps": [PlanningStep.CHECK_WEATHER.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("check_weather failed: %s", exc)
+            return {
+                "weather": [],
+                "completed_steps": [PlanningStep.CHECK_WEATHER.value],
+                "errors": [f"check_weather: {exc}"],
+            }
+
+    return node

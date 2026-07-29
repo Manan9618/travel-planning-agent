@@ -1,0 +1,108 @@
+"""Planning StateGraph — Week 4 deliverable.
+
+Wires a supervisor loop: supervisor picks a step -> the corresponding tool node runs
+-> control returns to supervisor -> repeat until every valid step is exhausted, then
+END. See `travel_agent.agents.state.determine_valid_steps` for the routing rules and
+`travel_agent.agents.supervisor.SupervisorAgent` for how ties between independent,
+simultaneously-valid steps are broken.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
+from travel_agent.agents.nodes import (
+    make_check_weather_node,
+    make_find_attractions_node,
+    make_find_restaurants_node,
+    make_parse_preferences_node,
+    make_search_flights_node,
+    make_search_hotels_node,
+)
+from travel_agent.agents.state import PlanningState, PlanningStep
+from travel_agent.agents.supervisor import SupervisorAgent
+from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.flight_search import FlightSearchTool
+from travel_agent.tools.hotel_search import HotelSearchTool
+from travel_agent.tools.preference_parser import PreferenceParser
+from travel_agent.tools.restaurant_finder import RestaurantFinderTool
+from travel_agent.tools.weather_checker import WeatherCheckerTool
+
+_WORKER_STEPS = [
+    PlanningStep.PARSE_PREFERENCES,
+    PlanningStep.SEARCH_FLIGHTS,
+    PlanningStep.SEARCH_HOTELS,
+    PlanningStep.FIND_ATTRACTIONS,
+    PlanningStep.FIND_RESTAURANTS,
+    PlanningStep.CHECK_WEATHER,
+]
+
+
+def build_sqlite_checkpointer(db_path: str = "checkpoints.sqlite") -> SqliteSaver:
+    """A checkpointer backed by a real file, for session persistence across runs.
+
+    For tests / one-off runs, pass `sqlite3.connect(":memory:", check_same_thread=False)`
+    directly to SqliteSaver instead of using this helper.
+    """
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
+    checkpointer.setup()
+    return checkpointer
+
+
+def make_supervisor_node(supervisor: SupervisorAgent):
+    def node(state: PlanningState) -> dict:
+        next_step = supervisor.decide_next(state)
+        return {"next_step": next_step.value}
+
+    return node
+
+
+def _route_from_supervisor(state: PlanningState) -> str:
+    step = state["next_step"]
+    return END if step == PlanningStep.DONE.value else step
+
+
+def build_planning_graph(
+    *,
+    parser: PreferenceParser | None = None,
+    flight_tool: FlightSearchTool | None = None,
+    hotel_tool: HotelSearchTool | None = None,
+    attraction_tool: AttractionFinderTool | None = None,
+    restaurant_tool: RestaurantFinderTool | None = None,
+    weather_tool: WeatherCheckerTool | None = None,
+    supervisor: SupervisorAgent | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
+    parser = parser or PreferenceParser()
+    flight_tool = flight_tool or FlightSearchTool()
+    hotel_tool = hotel_tool or HotelSearchTool()
+    attraction_tool = attraction_tool or AttractionFinderTool()
+    restaurant_tool = restaurant_tool or RestaurantFinderTool()
+    weather_tool = weather_tool or WeatherCheckerTool()
+    supervisor = supervisor or SupervisorAgent()
+
+    graph = StateGraph(PlanningState)
+    graph.add_node("supervisor", make_supervisor_node(supervisor))
+    graph.add_node(PlanningStep.PARSE_PREFERENCES.value, make_parse_preferences_node(parser))
+    graph.add_node(PlanningStep.SEARCH_FLIGHTS.value, make_search_flights_node(flight_tool))
+    graph.add_node(PlanningStep.SEARCH_HOTELS.value, make_search_hotels_node(hotel_tool))
+    graph.add_node(PlanningStep.FIND_ATTRACTIONS.value, make_find_attractions_node(attraction_tool))
+    graph.add_node(PlanningStep.FIND_RESTAURANTS.value, make_find_restaurants_node(restaurant_tool))
+    graph.add_node(PlanningStep.CHECK_WEATHER.value, make_check_weather_node(weather_tool))
+
+    graph.add_edge(START, "supervisor")
+    graph.add_conditional_edges(
+        "supervisor",
+        _route_from_supervisor,
+        {**{step.value: step.value for step in _WORKER_STEPS}, END: END},
+    )
+    for step in _WORKER_STEPS:
+        graph.add_edge(step.value, "supervisor")
+
+    return graph.compile(checkpointer=checkpointer)

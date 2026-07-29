@@ -1,0 +1,210 @@
+from datetime import date
+from unittest.mock import MagicMock
+
+from travel_agent.agents.nodes import (
+    make_check_weather_node,
+    make_find_attractions_node,
+    make_find_restaurants_node,
+    make_parse_preferences_node,
+    make_search_flights_node,
+    make_search_hotels_node,
+)
+from travel_agent.models.core import (
+    Attraction,
+    FlightOption,
+    HotelOption,
+    Restaurant,
+    TravelPreferences,
+    WeatherForecast,
+)
+
+BASE_PREFS = {
+    "origin": "Boston",
+    "destination": "Paris",
+    "start_date": "2026-09-01",
+    "end_date": "2026-09-05",
+    "duration_days": 5,
+    "travelers": 2,
+    "budget_total": 2000,
+}
+
+
+# --- parse_preferences ----------------------------------------------------
+
+
+def test_parse_preferences_node_success():
+    parser = MagicMock()
+    parser.parse.return_value = TravelPreferences(destination="Paris", raw_text="paris trip")
+    node = make_parse_preferences_node(parser)
+    result = node({"raw_text": "paris trip"})
+    assert result["preferences"]["destination"] == "Paris"
+    assert result["completed_steps"] == ["parse_preferences"]
+    assert result["errors"] == []
+
+
+def test_parse_preferences_node_failure():
+    parser = MagicMock()
+    parser.parse.side_effect = ValueError("bad input")
+    node = make_parse_preferences_node(parser)
+    result = node({"raw_text": ""})
+    assert result["preferences"] is None
+    assert result["completed_steps"] == ["parse_preferences"]
+    assert "bad input" in result["errors"][0]
+
+
+# --- search_flights ---------------------------------------------------
+
+
+def test_search_flights_node_success():
+    tool = MagicMock()
+    tool.search.return_value = [
+        FlightOption(
+            airline="AF",
+            origin="BOS",
+            destination="PAR",
+            departure_time="2026-09-01T10:00:00",
+            arrival_time="2026-09-01T22:00:00",
+            duration_minutes=420,
+            price=650,
+        )
+    ]
+    node = make_search_flights_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert len(result["flights"]) == 1
+    assert result["completed_steps"] == ["search_flights"]
+    assert result["errors"] == []
+    tool.search.assert_called_once()
+    call_args = tool.search.call_args[0]
+    assert call_args[0] == "BOS"
+    assert call_args[1] == "PAR"
+
+
+def test_search_flights_node_unmapped_city_records_error():
+    tool = MagicMock()
+    node = make_search_flights_node(tool)
+    prefs = {**BASE_PREFS, "origin": "Nowhereville"}
+    result = node({"preferences": prefs})
+    assert result["flights"] == []
+    assert result["completed_steps"] == ["search_flights"]
+    assert "no IATA mapping" in result["errors"][0]
+    tool.search.assert_not_called()
+
+
+def test_search_flights_node_tool_exception_records_error():
+    tool = MagicMock()
+    tool.search.side_effect = RuntimeError("api down")
+    node = make_search_flights_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert result["flights"] == []
+    assert "api down" in result["errors"][0]
+
+
+# --- search_hotels ---------------------------------------------------
+
+
+def test_search_hotels_node_success():
+    tool = MagicMock()
+    tool.search.return_value = [
+        HotelOption(
+            name="Hotel X", address="Paris, France", lat=48.85, lng=2.35, price_per_night=100
+        )
+    ]
+    node = make_search_hotels_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert len(result["hotels"]) == 1
+    assert result["completed_steps"] == ["search_hotels"]
+    check_in, check_out = tool.search.call_args[0][1], tool.search.call_args[0][2]
+    assert check_in == date(2026, 9, 1)
+    assert check_out == date(2026, 9, 5)
+
+
+def test_search_hotels_node_exception_records_error():
+    tool = MagicMock()
+    tool.search.side_effect = RuntimeError("down")
+    node = make_search_hotels_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert result["hotels"] == []
+    assert "down" in result["errors"][0]
+
+
+# --- find_attractions ---------------------------------------------------
+
+
+def test_find_attractions_node_success():
+    tool = MagicMock()
+    tool.search.return_value = [Attraction(name="Louvre", lat=48.86, lng=2.33)]
+    node = make_find_attractions_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert len(result["attractions"]) == 1
+    assert result["completed_steps"] == ["find_attractions"]
+
+
+def test_find_attractions_node_exception_records_error():
+    tool = MagicMock()
+    tool.search.side_effect = RuntimeError("down")
+    node = make_find_attractions_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert result["attractions"] == []
+    assert "down" in result["errors"][0]
+
+
+# --- find_restaurants ---------------------------------------------------
+
+
+def test_find_restaurants_node_success():
+    tool = MagicMock()
+    tool.search.return_value = [Restaurant(name="Le Cafe", lat=48.85, lng=2.35)]
+    node = make_find_restaurants_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert len(result["restaurants"]) == 1
+    assert result["completed_steps"] == ["find_restaurants"]
+
+
+def test_find_restaurants_node_exception_records_error():
+    tool = MagicMock()
+    tool.search.side_effect = RuntimeError("down")
+    node = make_find_restaurants_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert result["restaurants"] == []
+    assert "down" in result["errors"][0]
+
+
+# --- check_weather ---------------------------------------------------
+
+
+def test_check_weather_node_success():
+    tool = MagicMock()
+    tool.get_forecast.return_value = [
+        WeatherForecast(
+            day=date(2026, 9, 1),
+            condition="Clear",
+            temp_high_c=22,
+            temp_low_c=14,
+            rain_probability=0.1,
+            wind_speed_kph=10,
+            comfort_score=9.0,
+        )
+    ]
+    node = make_check_weather_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert len(result["weather"]) == 1
+    assert result["completed_steps"] == ["check_weather"]
+
+
+def test_check_weather_node_exception_records_error():
+    tool = MagicMock()
+    tool.get_forecast.side_effect = RuntimeError("down")
+    node = make_check_weather_node(tool)
+    result = node({"preferences": BASE_PREFS})
+    assert result["weather"] == []
+    assert "down" in result["errors"][0]
+
+
+def test_check_weather_node_uses_duration_days_when_end_date_missing():
+    tool = MagicMock()
+    tool.get_forecast.return_value = []
+    node = make_check_weather_node(tool)
+    prefs = {**BASE_PREFS, "end_date": None, "duration_days": 5}
+    node({"preferences": prefs})
+    start, end = tool.get_forecast.call_args[0][1], tool.get_forecast.call_args[0][2]
+    assert (end - start).days == 4  # 5-day trip inclusive of start day

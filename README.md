@@ -34,6 +34,23 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] 46 new unit tests + 1 integration test simulating a full 5-day London trip across
       all four tools together
 
+**Phase 1, Week 4 — LangGraph State Machine & Tool Orchestration** — done
+
+- [x] Typed `PlanningState` + `determine_valid_steps`: encodes hard dependencies
+      (preferences must exist before any search; flights need an origin; weather
+      needs a start date) as code, not something the LLM has to infer
+- [x] `SupervisorAgent`: skips the LLM entirely when only one step is valid; calls
+      it (with structured output, validated against the allowed set) only when
+      multiple independent tools are all ready and an order must be chosen
+- [x] All 6 tools wired into StateGraph nodes, each catching its own exceptions
+      into `errors` so one tool failing doesn't halt the run
+- [x] SQLite-backed checkpointer (`langgraph-checkpoint-sqlite`) — verified state
+      persists and is retrievable across a fresh connection using just a `thread_id`
+- [x] End-to-end smoke test: real natural-language input → all 6 tools called → full
+      itinerary-ready state assembled, live against all real APIs
+- [x] 34 new unit/integration tests (state routing, supervisor, each node, and the
+      full compiled graph with stubbed tools)
+
 ## Setup
 
 ```bash
