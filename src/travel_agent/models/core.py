@@ -114,6 +114,9 @@ class Attraction(BaseModel):
     estimated_visit_minutes: int = Field(default=90, ge=15)
     price: float | None = Field(default=None, ge=0)
     description: str | None = None
+    is_mock_data: bool = Field(
+        default=False, description="True when the provider failed and this is a fallback"
+    )
 
 
 class Restaurant(BaseModel):
@@ -124,6 +127,9 @@ class Restaurant(BaseModel):
     rating: float | None = Field(default=None, ge=0, le=5)
     price_level: int = Field(default=2, ge=1, le=4)
     opening_hours: str | None = None
+    is_mock_data: bool = Field(
+        default=False, description="True when the provider failed and this is a fallback"
+    )
 
 
 class WeatherForecast(BaseModel):
