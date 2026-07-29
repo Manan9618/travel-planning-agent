@@ -5,14 +5,22 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 
 ## Status
 
-**Phase 1, Week 1 — Project Scaffold, Environment & API Setup** (in progress)
+**Phase 1, Week 1 — Project Scaffold, Environment & API Setup** — done
 
 - [x] Repo scaffold, Poetry project, pre-commit (black, ruff)
 - [x] Core Pydantic data models (`TravelPreferences`, `FlightOption`, `HotelOption`,
       `Attraction`, `Restaurant`, `Itinerary`, ...)
 - [x] `PreferenceParser` v1 (GPT-4o via LangChain structured output)
 - [x] Unit tests for `PreferenceParser` and core models
-- [ ] All API keys registered and smoke-tested
+- [x] All 7 external APIs registered and smoke-tested (`make smoke`)
+
+**Phase 1, Week 2 — Flight Search & Hotel Search Tools** (in progress)
+
+- [x] `FlightSearchTool` (TravelPayouts: merges `/v1/prices/cheap` + `/v2/prices/latest`)
+- [x] `HotelSearchTool` (Booking.com via RapidAPI: destination lookup + hotel search)
+- [x] Redis-backed response caching (`utils/cache.py`), graceful no-op if Redis is down
+- [x] Retry/backoff on transient errors; deterministic mock-data fallback (`is_mock_data` flag)
+- [x] 26 unit tests across both tools (mocked HTTP via `responses`), plus 6 for the cache layer
 
 ## Setup
 

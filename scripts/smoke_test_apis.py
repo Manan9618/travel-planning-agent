@@ -20,9 +20,9 @@ import requests
 sys.path.insert(0, "src")
 
 from travel_agent.config import settings  # noqa: E402
+from travel_agent.tools.hotel_search import HOST as BOOKING_RAPIDAPI_HOST  # noqa: E402
 
 TIMEOUT = 10
-BOOKING_RAPIDAPI_HOST = "booking-com15.p.rapidapi.com"
 
 
 @dataclass

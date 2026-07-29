@@ -67,7 +67,7 @@ class TravelPreferences(BaseModel):
 
 
 class FlightOption(BaseModel):
-    airline: str
+    airline: str = Field(description="IATA carrier code, or the OTA/gate name when unavailable")
     flight_number: str | None = None
     origin: str
     destination: str
@@ -78,6 +78,13 @@ class FlightOption(BaseModel):
     price: float = Field(ge=0)
     currency: str = "USD"
     booking_link: str | None = None
+    has_exact_time: bool = Field(
+        default=True,
+        description="False when only a date (no time-of-day) was available from the provider",
+    )
+    is_mock_data: bool = Field(
+        default=False, description="True when the provider failed and this is a fallback"
+    )
 
 
 class HotelOption(BaseModel):
@@ -85,11 +92,16 @@ class HotelOption(BaseModel):
     address: str
     lat: float
     lng: float
-    rating: float | None = Field(default=None, ge=0, le=5)
+    rating: float | None = Field(
+        default=None, ge=0, le=10, description="Guest review score, 0-10 scale (Booking.com)"
+    )
     price_per_night: float = Field(ge=0)
     currency: str = "USD"
     amenities: list[str] = Field(default_factory=list)
     booking_link: str | None = None
+    is_mock_data: bool = Field(
+        default=False, description="True when the provider failed and this is a fallback"
+    )
 
 
 class Attraction(BaseModel):

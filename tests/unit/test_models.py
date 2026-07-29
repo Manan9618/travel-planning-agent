@@ -138,7 +138,7 @@ def test_hotel_option_rating_bounds():
             address="123 Main St",
             lat=48.85,
             lng=2.35,
-            rating=6,
+            rating=11,
             price_per_night=100,
         )
 
