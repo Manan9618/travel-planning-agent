@@ -150,6 +150,10 @@ class ItineraryItem(BaseModel):
         description="flight | hotel_checkin | attraction | restaurant | transfer"
     )
     title: str
+    category: str | None = Field(
+        default=None,
+        description="source category, e.g. Attraction.category; used for weather matching",
+    )
     location: str | None = None
     lat: float | None = None
     lng: float | None = None
@@ -162,6 +166,7 @@ class DayPlan(BaseModel):
     date: date
     items: list[ItineraryItem] = Field(default_factory=list)
     weather: WeatherForecast | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BudgetSummary(BaseModel):

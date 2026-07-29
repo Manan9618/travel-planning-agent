@@ -6,6 +6,7 @@ from travel_agent.models.core import (
     HotelOption,
     Restaurant,
     TravelPreferences,
+    WeatherForecast,
 )
 from travel_agent.tools.itinerary_builder import (
     HOTEL_CHECKIN_TIME,
@@ -43,8 +44,8 @@ def _hotel(lat=48.85, lng=2.35):
     )
 
 
-def _attraction(name, lat=48.86, lng=2.33):
-    return Attraction(name=name, lat=lat, lng=lng, rating=4.5)
+def _attraction(name, lat=48.86, lng=2.33, category=None):
+    return Attraction(name=name, lat=lat, lng=lng, rating=4.5, category=category)
 
 
 def _restaurant(name, lat=48.85, lng=2.35):
@@ -228,3 +229,140 @@ def test_end_date_takes_precedence_over_duration_days():
     prefs.end_date = date(2026, 9, 3)  # explicit end_date should win over duration=10
     itinerary = _builder().build(prefs, _hotel(), ATTRACTIONS, RESTAURANTS)
     assert len(itinerary.days) == 3
+
+
+# --- weather-awareness (Week 7) --------------------------------------------
+
+
+def _weather(day_val, rain=0.1, comfort=9.0):
+    return WeatherForecast(
+        day=day_val,
+        condition="Clear" if comfort >= 5 else "Rain",
+        temp_high_c=22,
+        temp_low_c=14,
+        rain_probability=rain,
+        wind_speed_kph=10,
+        comfort_score=comfort,
+    )
+
+
+MIXED_ATTRACTIONS = [
+    _attraction("City Museum", category="Museum"),
+    _attraction("Art Gallery", category="Art gallery"),
+    _attraction("Central Park", category="Park"),
+    _attraction("Botanical Garden", category="Garden"),
+]
+
+
+def test_day_weather_field_populated_when_forecast_provided():
+    weather = [_weather(date(2026, 9, 2))]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    assert itinerary.days[1].weather is not None
+    assert itinerary.days[1].weather.condition == "Clear"
+    assert itinerary.days[0].weather is None  # no forecast supplied for day 1
+
+
+def test_no_weather_argument_leaves_weather_field_none():
+    itinerary = _builder().build(_prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS)
+    assert all(day.weather is None for day in itinerary.days)
+
+
+def test_good_weather_day_prefers_outdoor_attractions():
+    weather = [_weather(date(2026, 9, 2), rain=0.05, comfort=9.5)]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    full_day = itinerary.days[1]
+    attraction_titles = [i.title for i in full_day.items if i.activity_type == "attraction"]
+    assert set(attraction_titles) == {"Central Park", "Botanical Garden"}
+
+
+def test_bad_weather_day_prefers_indoor_attractions():
+    weather = [_weather(date(2026, 9, 2), rain=0.9, comfort=2.0)]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    full_day = itinerary.days[1]
+    attraction_titles = [i.title for i in full_day.items if i.activity_type == "attraction"]
+    assert set(attraction_titles) == {"City Museum", "Art Gallery"}
+
+
+def test_rainy_day_produces_pack_rain_gear_warning():
+    weather = [_weather(date(2026, 9, 2), rain=0.9, comfort=2.0)]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    assert any("rain gear" in w for w in itinerary.days[1].warnings)
+
+
+def test_good_weather_day_has_no_warnings():
+    weather = [_weather(date(2026, 9, 2), rain=0.05, comfort=9.5)]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    assert itinerary.days[1].warnings == []
+
+
+def test_extreme_heat_produces_warning():
+    weather = [
+        WeatherForecast(
+            day=date(2026, 9, 2),
+            condition="Clear",
+            temp_high_c=38,
+            temp_low_c=28,
+            rain_probability=0.0,
+            wind_speed_kph=10,
+            comfort_score=6.0,
+        )
+    ]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    assert any("hot" in w.lower() for w in itinerary.days[1].warnings)
+
+
+def test_attraction_item_carries_category_for_later_analysis():
+    weather = [_weather(date(2026, 9, 2))]
+    itinerary = _builder().build(
+        _prefs(duration=4), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    attraction_items = [i for i in itinerary.days[1].items if i.activity_type == "attraction"]
+    assert all(i.category is not None for i in attraction_items)
+
+
+def test_switching_weather_across_two_days_swaps_selection_for_each():
+    weather = [
+        _weather(date(2026, 9, 2), rain=0.05, comfort=9.5),  # good
+        _weather(date(2026, 9, 3), rain=0.9, comfort=2.0),  # bad
+    ]
+    itinerary = _builder().build(
+        _prefs(duration=5), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    good_day_titles = {i.title for i in itinerary.days[1].items if i.activity_type == "attraction"}
+    bad_day_titles = {i.title for i in itinerary.days[2].items if i.activity_type == "attraction"}
+    assert good_day_titles == {"Central Park", "Botanical Garden"}
+    assert bad_day_titles == {"City Museum", "Art Gallery"}
+    assert good_day_titles.isdisjoint(bad_day_titles)
+
+
+def test_no_forecast_for_a_day_falls_back_to_original_order():
+    # weather only covers day 2; day 3 has none and should just use original order
+    weather = [_weather(date(2026, 9, 2), rain=0.9, comfort=2.0)]
+    itinerary = _builder().build(
+        _prefs(duration=5), _hotel(), MIXED_ATTRACTIONS, RESTAURANTS, weather=weather
+    )
+    day3_titles = [i.title for i in itinerary.days[2].items if i.activity_type == "attraction"]
+    assert day3_titles == ["Central Park", "Botanical Garden"]  # the two remaining, in order
+
+
+def test_first_full_day_uses_top_rated_attractions_not_skipped():
+    # regression check: previously the first two attractions (highest-rated, since
+    # AttractionFinderTool sorts by rating) were silently never scheduled because
+    # the day-index arithmetic for the first full day started at 1, not 0
+    itinerary = _builder().build(_prefs(duration=4), _hotel(), ATTRACTIONS, RESTAURANTS)
+    first_full_day_titles = {
+        i.title for i in itinerary.days[1].items if i.activity_type == "attraction"
+    }
+    assert first_full_day_titles == {"Attraction 0", "Attraction 1"}

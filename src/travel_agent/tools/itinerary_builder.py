@@ -1,4 +1,4 @@
-"""ItineraryBuilder v1 — Week 5 deliverable.
+"""ItineraryBuilder — Week 5 (time slot assignment) + Week 7 (weather-awareness).
 
 Assigns flights/hotel/attractions/restaurants into a day-by-day schedule:
 - Day 1 (arrival): flight arrival -> transfer to hotel -> check-in -> dinner if time allows
@@ -12,6 +12,13 @@ that data. Travel time between consecutive activities comes from the real Distan
 Matrix API (TravelTimeEstimator); airport transfer times are flat estimates, since we
 don't model airport coordinates yet (no round-trip flight object either — see Week 2's
 FlightSearchTool notes). Both limitations are candidates for later weeks.
+
+When a `weather` forecast is supplied for a day, attraction picks for that day prefer
+outdoor spots on good-weather days and indoor spots on bad-weather days (see
+`weather_matcher.classify_attraction`), falling back to the original rating-sorted
+order when there's no clear match (or no forecast at all — the free-tier forecast
+only covers ~5 days out, so most of a trip further out has none). Each day also gets
+a `warnings` list surfacing anything worth packing for (rain, heat, cold, wind).
 """
 
 from __future__ import annotations
@@ -27,9 +34,11 @@ from travel_agent.models.core import (
     ItineraryItem,
     Restaurant,
     TravelPreferences,
+    WeatherForecast,
 )
 from travel_agent.tools.distance_matrix import TravelTimeEstimator
 from travel_agent.tools.restaurant_finder import estimate_meal_cost
+from travel_agent.tools.weather_matcher import classify_attraction, is_bad_weather
 
 HOTEL_CHECKIN_TIME = time(15, 0)
 HOTEL_CHECKOUT_TIME = time(11, 0)
@@ -43,6 +52,12 @@ ARRIVAL_TRANSFER_MINUTES = 90  # flight arrival -> hotel; flat estimate, no airp
 DEPARTURE_TRANSFER_MINUTES = 60  # hotel checkout -> airport; same limitation
 DEFAULT_MEAL_MINUTES = 60
 DEFAULT_TRIP_LENGTH_DAYS = 5
+
+# Week 7: thresholds for surfacing a narrative warning on a given day
+HIGH_RAIN_WARNING_THRESHOLD = 0.5
+HIGH_WIND_WARNING_KPH = 40.0
+HIGH_TEMP_WARNING_C = 33.0
+LOW_TEMP_WARNING_C = 5.0
 
 
 def _slot_for_time(t: time) -> str:
@@ -64,6 +79,7 @@ class ItineraryBuilder:
         attractions: list[Attraction],
         restaurants: list[Restaurant],
         flight: FlightOption | None = None,
+        weather: list[WeatherForecast] | None = None,
     ) -> Itinerary:
         start = preferences.start_date or (date.today() + timedelta(days=30))
         if preferences.end_date:
@@ -73,10 +89,14 @@ class ItineraryBuilder:
             end = start + timedelta(days=duration - 1)
         num_days = max((end - start).days + 1, 1)
 
+        weather_by_date = {w.day: w for w in (weather or [])}
+        used_attraction_indices: set[int] = set()
+
         days: list[DayPlan] = []
         for day_index in range(num_days):
             current_date = start + timedelta(days=day_index)
             day_number = day_index + 1
+            forecast = weather_by_date.get(current_date)
             if day_index == 0:
                 day_plan = self._build_arrival_day(
                     day_number, current_date, hotel, flight, restaurants, preferences.destination
@@ -85,8 +105,16 @@ class ItineraryBuilder:
                 day_plan = self._build_departure_day(day_number, current_date, hotel)
             else:
                 day_plan = self._build_full_day(
-                    day_number, current_date, hotel, attractions, restaurants, day_index
+                    day_number,
+                    current_date,
+                    hotel,
+                    attractions,
+                    restaurants,
+                    used_attraction_indices,
+                    forecast,
                 )
+            day_plan.weather = forecast
+            day_plan.warnings = self._weather_warnings(forecast)
             days.append(day_plan)
 
         return Itinerary(
@@ -189,13 +217,15 @@ class ItineraryBuilder:
         hotel: HotelOption,
         attractions: list[Attraction],
         restaurants: list[Restaurant],
-        day_index: int,
+        used_attraction_indices: set[int],
+        forecast: WeatherForecast | None,
     ) -> DayPlan:
         items: list[ItineraryItem] = []
         prev_end = datetime.combine(current_date, time(8, 0))
         prev_lat, prev_lng = hotel.lat, hotel.lng
+        day_index = day_number - 2  # 0-based count of full days, for restaurant rotation
 
-        morning = self._pick(attractions, day_index * 2)
+        morning, morning_idx = self._pick_attraction(attractions, used_attraction_indices, forecast)
         if morning:
             start, end = self._next_slot(
                 prev_end,
@@ -208,6 +238,7 @@ class ItineraryBuilder:
                 morning.estimated_visit_minutes,
             )
             if start is not None:
+                used_attraction_indices.add(morning_idx)
                 items.append(
                     ItineraryItem(
                         time_slot="morning",
@@ -215,6 +246,7 @@ class ItineraryBuilder:
                         end_time=end,
                         activity_type="attraction",
                         title=morning.name,
+                        category=morning.category,
                         location=morning.description,
                         lat=morning.lat,
                         lng=morning.lng,
@@ -250,7 +282,9 @@ class ItineraryBuilder:
                 )
                 prev_end, prev_lat, prev_lng = end, lunch.lat, lunch.lng
 
-        afternoon = self._pick(attractions, day_index * 2 + 1)
+        afternoon, afternoon_idx = self._pick_attraction(
+            attractions, used_attraction_indices, forecast
+        )
         if afternoon:
             start, end = self._next_slot(
                 prev_end,
@@ -263,6 +297,7 @@ class ItineraryBuilder:
                 afternoon.estimated_visit_minutes,
             )
             if start is not None:
+                used_attraction_indices.add(afternoon_idx)
                 items.append(
                     ItineraryItem(
                         time_slot="afternoon",
@@ -270,6 +305,7 @@ class ItineraryBuilder:
                         end_time=end,
                         activity_type="attraction",
                         title=afternoon.name,
+                        category=afternoon.category,
                         location=afternoon.description,
                         lat=afternoon.lat,
                         lng=afternoon.lng,
@@ -340,6 +376,52 @@ class ItineraryBuilder:
         if not items:
             return None
         return items[index % len(items)]
+
+    @staticmethod
+    def _pick_attraction(
+        attractions: list[Attraction],
+        used_indices: set[int],
+        forecast: WeatherForecast | None,
+    ) -> tuple[Attraction | None, int | None]:
+        """The next attraction to schedule: prefers one not yet used, and when a
+        forecast is available, prefers a setting (indoor/outdoor) matching the
+        day's weather. Falls back to the original rating-sorted order when
+        there's no forecast or no attraction of the wanted setting remains
+        (wrapping around to reuse attractions once every one has been used).
+        """
+        if not attractions:
+            return None, None
+        unused = [i for i in range(len(attractions)) if i not in used_indices]
+        pool = unused if unused else list(range(len(attractions)))
+
+        if forecast is None:
+            return attractions[pool[0]], pool[0]
+
+        wanted = "indoor" if is_bad_weather(forecast) else "outdoor"
+        for i in pool:
+            if classify_attraction(attractions[i]) == wanted:
+                return attractions[i], i
+        for i in pool:
+            if classify_attraction(attractions[i]) == "ambiguous":
+                return attractions[i], i
+        return attractions[pool[0]], pool[0]
+
+    @staticmethod
+    def _weather_warnings(forecast: WeatherForecast | None) -> list[str]:
+        if forecast is None:
+            return []
+        warnings = []
+        if forecast.rain_probability >= HIGH_RAIN_WARNING_THRESHOLD:
+            warnings.append(
+                f"Pack rain gear — {forecast.rain_probability * 100:.0f}% chance of rain"
+            )
+        if forecast.wind_speed_kph >= HIGH_WIND_WARNING_KPH:
+            warnings.append(f"Windy conditions expected ({forecast.wind_speed_kph:.0f} km/h)")
+        if forecast.temp_high_c >= HIGH_TEMP_WARNING_C:
+            warnings.append(f"Very hot ({forecast.temp_high_c:.0f}°C) — stay hydrated")
+        if forecast.temp_high_c <= LOW_TEMP_WARNING_C:
+            warnings.append(f"Cold ({forecast.temp_high_c:.0f}°C) — dress warmly")
+        return warnings
 
     def _next_slot(
         self,

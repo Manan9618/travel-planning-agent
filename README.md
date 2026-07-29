@@ -91,6 +91,28 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       cascading-conflict case, plus node-level and full-graph human-in-the-loop
       integration tests)
 
+**Phase 2, Week 7 — Weather-Aware Scheduling** — done
+
+- [x] `weather_matcher.py`: keyword-based indoor/outdoor classifier for attractions
+      (no data source we use tags this explicitly), a bad-weather check (high rain
+      probability or low comfort score), and the `weather_adaptation_rate` metric
+- [x] `ItineraryBuilder` now prefers outdoor attractions on good-weather days and
+      indoor ones (museums, galleries) on bad-weather days, falling back to the
+      original rating-sorted order when there's no forecast or no clear match
+- [x] Narrative warnings per day (`DayPlan.warnings`) — "Pack rain gear", heat/cold/
+      wind alerts — surfaced from the same forecast used for scheduling
+- [x] Found and fixed a real Week 5 bug while reworking the attraction-picking
+      logic: the day-index arithmetic for the first full day started at 1 instead
+      of 0, so the top one or two highest-rated attractions were silently never
+      scheduled in any itinerary
+- [x] A/B test script (`scripts/weather_ab_test.py`) across 10 real destinations
+      with a controlled good/bad weather pattern: weather-aware scheduling hit
+      100% adaptation rate on every destination vs. a 39% baseline average — a
+      measured +61 point improvement
+- [x] 27 new tests (weather_matcher classification/metric, weather-aware
+      ItineraryBuilder scenarios including a regression test for the Week 5 bug,
+      and node-level weather pass-through)
+
 ## Setup
 
 ```bash

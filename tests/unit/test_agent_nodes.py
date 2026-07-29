@@ -240,6 +240,17 @@ def _state_with_full_search_results():
         ],
         "attractions": [Attraction(name="Louvre", lat=48.86, lng=2.33).model_dump(mode="json")],
         "restaurants": [Restaurant(name="Le Cafe", lat=48.85, lng=2.35).model_dump(mode="json")],
+        "weather": [
+            WeatherForecast(
+                day="2026-09-01",
+                condition="Clear",
+                temp_high_c=22,
+                temp_low_c=14,
+                rain_probability=0.1,
+                wind_speed_kph=10,
+                comfort_score=9.0,
+            ).model_dump(mode="json")
+        ],
     }
 
 
@@ -256,6 +267,20 @@ def test_build_itinerary_node_success():
     assert result["completed_steps"] == ["build_itinerary"]
     assert result["errors"] == []
     builder.build.assert_called_once()
+
+
+def test_build_itinerary_node_passes_weather_forecasts_to_builder():
+    builder = MagicMock()
+    fake_itinerary = MagicMock()
+    fake_itinerary.model_dump.return_value = {"days": []}
+    builder.build.return_value = fake_itinerary
+
+    node = make_build_itinerary_node(builder)
+    node(_state_with_full_search_results())
+
+    call_kwargs = builder.build.call_args.kwargs
+    assert len(call_kwargs["weather"]) == 1
+    assert call_kwargs["weather"][0].condition == "Clear"
 
 
 def test_build_itinerary_node_no_hotel_records_error():

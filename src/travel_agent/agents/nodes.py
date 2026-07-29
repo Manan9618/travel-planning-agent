@@ -23,6 +23,7 @@ from travel_agent.models.core import (
     Itinerary,
     Restaurant,
     TravelPreferences,
+    WeatherForecast,
 )
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.conflict_detector import ConflictDetector
@@ -209,8 +210,11 @@ def make_build_itinerary_node(builder: ItineraryBuilder) -> Node:
             restaurants = [Restaurant(**r) for r in state.get("restaurants", [])]
             flights = state.get("flights") or []
             flight = FlightOption(**flights[0]) if flights else None
+            weather = [WeatherForecast(**w) for w in state.get("weather", [])]
 
-            itinerary = builder.build(prefs, hotel, attractions, restaurants, flight=flight)
+            itinerary = builder.build(
+                prefs, hotel, attractions, restaurants, flight=flight, weather=weather
+            )
             return {
                 "itinerary": itinerary.model_dump(mode="json"),
                 "completed_steps": [PlanningStep.BUILD_ITINERARY.value],
