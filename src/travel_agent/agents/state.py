@@ -20,6 +20,8 @@ class PlanningStep(str, Enum):
     FIND_RESTAURANTS = "find_restaurants"
     CHECK_WEATHER = "check_weather"
     BUILD_ITINERARY = "build_itinerary"
+    CHECK_CONFLICTS = "check_conflicts"
+    HUMAN_REVIEW = "human_review"
     DONE = "done"
 
 
@@ -32,6 +34,8 @@ class PlanningState(TypedDict, total=False):
     restaurants: list[dict]
     weather: list[dict]
     itinerary: dict | None
+    conflict_log: list[dict]
+    unresolved_conflicts: list[dict]
     next_step: str
     completed_steps: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
@@ -69,4 +73,9 @@ def determine_valid_steps(state: PlanningState) -> list[PlanningStep]:
 
     if PlanningStep.BUILD_ITINERARY.value not in completed and state.get("hotels"):
         return [PlanningStep.BUILD_ITINERARY]
+    if PlanningStep.BUILD_ITINERARY.value in completed:
+        if PlanningStep.CHECK_CONFLICTS.value not in completed:
+            return [PlanningStep.CHECK_CONFLICTS]
+        if state.get("unresolved_conflicts") and PlanningStep.HUMAN_REVIEW.value not in completed:
+            return [PlanningStep.HUMAN_REVIEW]
     return [PlanningStep.DONE]

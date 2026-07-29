@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 from travel_agent.agents.nodes import (
     make_build_itinerary_node,
+    make_check_conflicts_node,
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
@@ -12,8 +13,11 @@ from travel_agent.agents.nodes import (
 )
 from travel_agent.models.core import (
     Attraction,
+    Conflict,
     FlightOption,
     HotelOption,
+    Itinerary,
+    ResolutionLogEntry,
     Restaurant,
     TravelPreferences,
     WeatherForecast,
@@ -291,3 +295,53 @@ def test_build_itinerary_node_builder_exception_records_error():
 
     assert result["itinerary"] is None
     assert "scheduling failed" in result["errors"][0]
+
+
+# --- check_conflicts ---------------------------------------------------
+
+
+def _minimal_itinerary_dict():
+    prefs = TravelPreferences(destination="Paris", raw_text="test")
+    return Itinerary(preferences=prefs, days=[]).model_dump(mode="json")
+
+
+def test_check_conflicts_node_no_unresolved_conflicts():
+    detector = MagicMock()
+    resolver = MagicMock()
+    detector.detect.return_value = []  # detect_and_resolve calls detector.detect internally
+
+    node = make_check_conflicts_node(detector, resolver)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["completed_steps"] == ["check_conflicts"]
+    assert result["conflict_log"] == []
+    assert result["unresolved_conflicts"] == []
+    assert result["errors"] == []
+
+
+def test_check_conflicts_node_reports_unresolved_conflicts():
+    detector = MagicMock()
+    resolver = MagicMock()
+    conflict = Conflict(day_number=0, conflict_type="budget_overrun", description="too expensive")
+    entry = ResolutionLogEntry(
+        day_number=0, conflict_type="budget_overrun", action="tried and failed", resolved=False
+    )
+    itinerary = Itinerary(preferences=TravelPreferences(destination="Paris", raw_text="t"), days=[])
+
+    detector.detect.return_value = [conflict]  # same unresolved conflict every pass
+    resolver.resolve.return_value = (itinerary, [entry], [conflict])
+
+    node = make_check_conflicts_node(detector, resolver)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["completed_steps"] == ["check_conflicts"]
+    assert len(result["unresolved_conflicts"]) == 1
+    assert result["unresolved_conflicts"][0]["conflict_type"] == "budget_overrun"
+    assert result["conflict_log"][0]["resolved"] is False
+
+
+def test_check_conflicts_node_no_itinerary_records_error():
+    node = make_check_conflicts_node(MagicMock(), MagicMock())
+    result = node({"itinerary": None})
+    assert result["completed_steps"] == ["check_conflicts"]
+    assert "no itinerary available" in result["errors"][0]

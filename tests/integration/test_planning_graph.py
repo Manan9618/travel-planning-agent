@@ -9,6 +9,7 @@ re-testing individual tools (see the Week 2/3 unit suites) or the real Superviso
 import sqlite3
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 from travel_agent.agents.graph import build_planning_graph
 from travel_agent.agents.state import PlanningState, determine_valid_steps
@@ -20,6 +21,8 @@ from travel_agent.models.core import (
     TravelPreferences,
     WeatherForecast,
 )
+from travel_agent.tools.conflict_detector import ConflictDetector
+from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
 
 
@@ -109,15 +112,17 @@ class FailingFlightTool:
         raise RuntimeError("provider unreachable")
 
 
-def _build_test_graph(checkpointer, flight_tool=None):
+def _build_test_graph(checkpointer, flight_tool=None, parser=None):
     return build_planning_graph(
-        parser=StubParser(),
+        parser=parser or StubParser(),
         flight_tool=flight_tool or StubFlightTool(),
         hotel_tool=StubHotelTool(),
         attraction_tool=StubAttractionTool(),
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
+        conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
+        conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -155,9 +160,11 @@ def test_full_graph_run_populates_every_field():
         "find_restaurants",
         "check_weather",
         "build_itinerary",
+        "check_conflicts",
     }
     assert result["itinerary"] is not None
     assert len(result["itinerary"]["days"]) == 5
+    assert result["unresolved_conflicts"] == []
 
 
 def test_graph_terminates_and_does_not_loop_forever():
@@ -186,6 +193,7 @@ def test_tool_failure_is_captured_without_halting_the_graph():
     assert "search_hotels" in result["completed_steps"]
     assert "find_attractions" in result["completed_steps"]
     assert "build_itinerary" in result["completed_steps"]
+    assert "check_conflicts" in result["completed_steps"]
     assert result["itinerary"] is not None
 
 
@@ -233,6 +241,8 @@ def test_no_origin_skips_flights_but_completes_everything_else():
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
+        conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
+        conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -245,5 +255,83 @@ def test_no_origin_skips_flights_but_completes_everything_else():
     assert result.get("flights", []) == []
     assert "search_hotels" in result["completed_steps"]
     assert "check_weather" in result["completed_steps"]
+    assert "check_conflicts" in result["completed_steps"]
     assert "build_itinerary" in result["completed_steps"]
     assert result["itinerary"] is not None
+
+
+class LowBudgetParser:
+    """Budget well below fixed costs (flight 650 + hotel 120*4=480 = 1130), so
+    ConflictResolver can't fix the overrun by trimming optional attractions/
+    restaurants alone — the only real way to reach an unresolvable conflict."""
+
+    def parse(self, text, reference_date=None):
+        return TravelPreferences(
+            origin="Boston",
+            destination="Paris",
+            start_date="2026-09-01",
+            end_date="2026-09-05",
+            budget_total=200,
+            raw_text=text,
+        )
+
+
+def test_unresolvable_budget_conflict_pauses_at_human_review():
+    checkpointer, _ = _memory_checkpointer()
+    graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
+    config = {"configurable": {"thread_id": "human-1"}}
+
+    result = graph.invoke(
+        {
+            "raw_text": "5 days in Paris from Boston, budget $200",
+            "errors": [],
+            "completed_steps": [],
+        },
+        config=config,
+    )
+
+    assert "check_conflicts" in result["completed_steps"]
+    assert "human_review" not in result["completed_steps"]
+    state = graph.get_state(config)
+    assert state.next == ("human_review",)
+    interrupt_payload = state.tasks[0].interrupts[0].value
+    assert interrupt_payload["unresolved_conflicts"][0]["conflict_type"] == "budget_overrun"
+
+
+def test_approving_unresolvable_conflict_completes_the_run():
+    checkpointer, _ = _memory_checkpointer()
+    graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
+    config = {"configurable": {"thread_id": "human-2"}}
+
+    graph.invoke(
+        {
+            "raw_text": "5 days in Paris from Boston, budget $200",
+            "errors": [],
+            "completed_steps": [],
+        },
+        config=config,
+    )
+    result = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    assert "human_review" in result["completed_steps"]
+    assert result["errors"] == []
+    assert graph.get_state(config).next == ()  # graph run has finished
+
+
+def test_rejecting_unresolvable_conflict_records_an_error():
+    checkpointer, _ = _memory_checkpointer()
+    graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
+    config = {"configurable": {"thread_id": "human-3"}}
+
+    graph.invoke(
+        {
+            "raw_text": "5 days in Paris from Boston, budget $200",
+            "errors": [],
+            "completed_steps": [],
+        },
+        config=config,
+    )
+    result = graph.invoke(Command(resume={"approved": False}), config=config)
+
+    assert "human_review" in result["completed_steps"]
+    assert any("did not approve" in e for e in result["errors"])

@@ -29,6 +29,7 @@ from travel_agent.models.core import (
     TravelPreferences,
 )
 from travel_agent.tools.distance_matrix import TravelTimeEstimator
+from travel_agent.tools.restaurant_finder import estimate_meal_cost
 
 HOTEL_CHECKIN_TIME = time(15, 0)
 HOTEL_CHECKOUT_TIME = time(11, 0)
@@ -175,6 +176,7 @@ class ItineraryBuilder:
                         title=dinner.name,
                         lat=dinner.lat,
                         lng=dinner.lng,
+                        cost=estimate_meal_cost(dinner.price_level),
                     )
                 )
 
@@ -243,6 +245,7 @@ class ItineraryBuilder:
                         title=lunch.name,
                         lat=lunch.lat,
                         lng=lunch.lng,
+                        cost=estimate_meal_cost(lunch.price_level),
                     )
                 )
                 prev_end, prev_lat, prev_lng = end, lunch.lat, lunch.lng
@@ -297,6 +300,7 @@ class ItineraryBuilder:
                         title=dinner.name,
                         lat=dinner.lat,
                         lng=dinner.lng,
+                        cost=estimate_meal_cost(dinner.price_level),
                     )
                 )
 

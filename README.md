@@ -70,6 +70,27 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] Live-tested end-to-end against all 3 required trip types (city tour, beach
       holiday, adventure trip) plus 25 new unit tests
 
+**Phase 2, Week 6 — Conflict Detection & Resolution** — done
+
+- [x] `ConflictDetector`: five constraint types — overlapping items, physically
+      impossible travel gaps (real Distance Matrix lookups), budget overruns,
+      too many activities per day, and restaurants outside normal meal hours
+- [x] `ConflictResolver`: shifts times, drops the lowest-priority activity, or
+      trims the most expensive optional items until back under budget. Returns
+      unresolved only when fixed costs (flights, hotel) alone exceed the budget
+- [x] `detect_and_resolve`: bounded iterative loop — live-testing showed that
+      fixing one conflict can surface another (a meal-time fix can create a new
+      impossible-travel gap), so a single detect→resolve pass isn't enough
+- [x] Human-in-the-loop `human_review` step using LangGraph's real `interrupt()`/
+      `Command(resume=...)` API: the graph genuinely pauses (verified via a live
+      forced-unresolvable-budget scenario) and resumes correctly on approval or
+      rejection
+- [x] Every resolution attempt, successful or not, is logged (`ResolutionLogEntry`)
+      for later evaluation analysis
+- [x] 47 new tests (20 detector scenarios, 13 resolver scenarios including the
+      cascading-conflict case, plus node-level and full-graph human-in-the-loop
+      integration tests)
+
 ## Setup
 
 ```bash

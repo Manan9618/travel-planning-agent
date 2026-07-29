@@ -98,7 +98,7 @@ def test_all_search_steps_done_with_hotels_present_routes_to_build_itinerary():
     assert determine_valid_steps(state) == [PlanningStep.BUILD_ITINERARY]
 
 
-def test_build_itinerary_already_completed_returns_done():
+def test_build_itinerary_completed_routes_to_check_conflicts():
     state = {
         "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
         "completed_steps": [
@@ -111,5 +111,63 @@ def test_build_itinerary_already_completed_returns_done():
             "build_itinerary",
         ],
         "hotels": [{"name": "Test Hotel"}],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.CHECK_CONFLICTS]
+
+
+def test_check_conflicts_completed_with_no_unresolved_conflicts_returns_done():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+            "check_conflicts",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+        "unresolved_conflicts": [],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.DONE]
+
+
+def test_check_conflicts_completed_with_unresolved_conflicts_routes_to_human_review():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+            "check_conflicts",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+        "unresolved_conflicts": [{"conflict_type": "budget_overrun"}],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.HUMAN_REVIEW]
+
+
+def test_human_review_completed_returns_done_even_with_unresolved_conflicts():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+            "check_conflicts",
+            "human_review",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+        "unresolved_conflicts": [{"conflict_type": "budget_overrun"}],
     }
     assert determine_valid_steps(state) == [PlanningStep.DONE]

@@ -13,15 +13,20 @@ import logging
 from collections.abc import Callable
 from datetime import date, timedelta
 
+from langgraph.types import interrupt
+
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.models.core import (
     Attraction,
     FlightOption,
     HotelOption,
+    Itinerary,
     Restaurant,
     TravelPreferences,
 )
 from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.conflict_detector import ConflictDetector
+from travel_agent.tools.conflict_resolver import ConflictResolver, detect_and_resolve
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
@@ -218,5 +223,60 @@ def make_build_itinerary_node(builder: ItineraryBuilder) -> Node:
                 "completed_steps": [PlanningStep.BUILD_ITINERARY.value],
                 "errors": [f"build_itinerary: {exc}"],
             }
+
+    return node
+
+
+def make_check_conflicts_node(detector: ConflictDetector, resolver: ConflictResolver) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            itinerary_data = state.get("itinerary")
+            if not itinerary_data:
+                raise ValueError("no itinerary available to check for conflicts")
+            itinerary = Itinerary(**itinerary_data)
+            resolved_itinerary, log, unresolved = detect_and_resolve(itinerary, detector, resolver)
+            return {
+                "itinerary": resolved_itinerary.model_dump(mode="json"),
+                "conflict_log": [entry.model_dump(mode="json") for entry in log],
+                "unresolved_conflicts": [c.model_dump(mode="json") for c in unresolved],
+                "completed_steps": [PlanningStep.CHECK_CONFLICTS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("check_conflicts failed: %s", exc)
+            return {
+                "conflict_log": [],
+                "unresolved_conflicts": [],
+                "completed_steps": [PlanningStep.CHECK_CONFLICTS.value],
+                "errors": [f"check_conflicts: {exc}"],
+            }
+
+    return node
+
+
+def make_human_review_node() -> Node:
+    """Pauses the graph run (via LangGraph's interrupt()) whenever ConflictResolver
+    couldn't fix every conflict on its own — e.g. a budget overrun that survives
+    trimming every optional attraction/restaurant. Resuming requires a
+    `Command(resume={"approved": bool})` call against the same thread_id; approving
+    just accepts the itinerary as-is (the conflict stays logged, unresolved, for the
+    record), since Week 6 doesn't yet have a mechanism for the user to specify a
+    replacement action (e.g. "increase my budget instead") — that's a natural fit
+    for the multi-turn refinement work in Week 21.
+    """
+
+    def node(state: PlanningState) -> dict:
+        decision = interrupt(
+            {
+                "message": "Some conflicts couldn't be auto-resolved. Approve the itinerary?",
+                "unresolved_conflicts": state.get("unresolved_conflicts", []),
+            }
+        )
+        approved = bool(decision.get("approved")) if isinstance(decision, dict) else False
+        logger.info("Human review decision: approved=%s", approved)
+        return {
+            "completed_steps": [PlanningStep.HUMAN_REVIEW.value],
+            "errors": [] if approved else ["human_review: user did not approve the itinerary"],
+        }
 
     return node

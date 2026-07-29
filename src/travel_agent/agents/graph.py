@@ -18,9 +18,11 @@ from langgraph.graph.state import CompiledStateGraph
 
 from travel_agent.agents.nodes import (
     make_build_itinerary_node,
+    make_check_conflicts_node,
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
+    make_human_review_node,
     make_parse_preferences_node,
     make_search_flights_node,
     make_search_hotels_node,
@@ -28,6 +30,8 @@ from travel_agent.agents.nodes import (
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.agents.supervisor import SupervisorAgent
 from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.conflict_detector import ConflictDetector
+from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
@@ -43,6 +47,8 @@ _WORKER_STEPS = [
     PlanningStep.FIND_RESTAURANTS,
     PlanningStep.CHECK_WEATHER,
     PlanningStep.BUILD_ITINERARY,
+    PlanningStep.CHECK_CONFLICTS,
+    PlanningStep.HUMAN_REVIEW,
 ]
 
 
@@ -80,6 +86,8 @@ def build_planning_graph(
     restaurant_tool: RestaurantFinderTool | None = None,
     weather_tool: WeatherCheckerTool | None = None,
     itinerary_builder: ItineraryBuilder | None = None,
+    conflict_detector: ConflictDetector | None = None,
+    conflict_resolver: ConflictResolver | None = None,
     supervisor: SupervisorAgent | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
@@ -90,6 +98,8 @@ def build_planning_graph(
     restaurant_tool = restaurant_tool or RestaurantFinderTool()
     weather_tool = weather_tool or WeatherCheckerTool()
     itinerary_builder = itinerary_builder or ItineraryBuilder()
+    conflict_detector = conflict_detector or ConflictDetector()
+    conflict_resolver = conflict_resolver or ConflictResolver()
     supervisor = supervisor or SupervisorAgent()
 
     graph = StateGraph(PlanningState)
@@ -101,6 +111,11 @@ def build_planning_graph(
     graph.add_node(PlanningStep.FIND_RESTAURANTS.value, make_find_restaurants_node(restaurant_tool))
     graph.add_node(PlanningStep.CHECK_WEATHER.value, make_check_weather_node(weather_tool))
     graph.add_node(PlanningStep.BUILD_ITINERARY.value, make_build_itinerary_node(itinerary_builder))
+    graph.add_node(
+        PlanningStep.CHECK_CONFLICTS.value,
+        make_check_conflicts_node(conflict_detector, conflict_resolver),
+    )
+    graph.add_node(PlanningStep.HUMAN_REVIEW.value, make_human_review_node())
 
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(

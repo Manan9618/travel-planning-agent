@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
-from travel_agent.models.core import BudgetSummary
+from travel_agent.models.core import BudgetSummary, Itinerary
+
+_ACTIVITY_TYPES = {"attraction", "restaurant"}
+
+
+def estimate_itinerary_cost(itinerary: Itinerary) -> float:
+    """Best-effort total cost: real flight/hotel prices plus whatever attraction/
+    restaurant items happen to carry a cost (restaurants always do, via
+    RestaurantFinderTool.estimate_meal_cost; attractions rarely do — Serper seldom
+    supplies a price). Used by ConflictDetector/ConflictResolver for budget checks.
+    """
+    total = sum(f.price for f in itinerary.flights)
+    if itinerary.hotel:
+        nights = max(len(itinerary.days) - 1, 1)
+        total += itinerary.hotel.price_per_night * nights
+    for day in itinerary.days:
+        for item in day.items:
+            if item.activity_type in _ACTIVITY_TYPES and item.cost:
+                total += item.cost
+    return total
 
 
 class BudgetTrackerTool:

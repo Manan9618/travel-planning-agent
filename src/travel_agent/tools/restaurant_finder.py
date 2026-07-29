@@ -23,6 +23,15 @@ CACHE_TTL_SECONDS = 24 * 3600
 _SYMBOL_RE = re.compile(r"^[€$£¥]+$")
 _NUMBER_RE = re.compile(r"\d+")
 
+# Rough per-person cost estimate for each price_level bucket, used by ItineraryBuilder
+# / ConflictDetector to include meals in budget calculations. Restaurant only carries
+# the 1-4 bucket, never a real dollar amount, so this is an estimate, not a quote.
+MEAL_COST_ESTIMATES: dict[int, float] = {1: 15.0, 2: 30.0, 3: 55.0, 4: 90.0}
+
+
+def estimate_meal_cost(price_level: int) -> float:
+    return MEAL_COST_ESTIMATES.get(price_level, 30.0)
+
 
 def _parse_price_level(price_level: str | None) -> int:
     """Map Serper's free-text priceLevel (e.g. "€20-40", "$$") to a 1-4 bucket."""

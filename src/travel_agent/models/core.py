@@ -184,3 +184,20 @@ class Itinerary(BaseModel):
     flights: list[FlightOption] = Field(default_factory=list)
     hotel: HotelOption | None = None
     budget_summary: BudgetSummary | None = None
+
+
+class Conflict(BaseModel):
+    day_number: int = Field(ge=0, description="0 means a whole-trip-level conflict")
+    conflict_type: str = Field(
+        description="overlap | impossible_travel | budget_overrun | "
+        "max_activities_exceeded | meal_time_violation"
+    )
+    description: str
+    auto_resolvable: bool = True
+
+
+class ResolutionLogEntry(BaseModel):
+    day_number: int
+    conflict_type: str
+    action: str
+    resolved: bool
