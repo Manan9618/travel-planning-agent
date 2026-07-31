@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters
 
 install:
 	poetry install
@@ -29,3 +29,6 @@ weather-ab:
 
 budget-scenarios:
 	poetry run python scripts/budget_scenarios_test.py
+
+geo-clusters:
+	poetry run python scripts/geo_clustering_test.py

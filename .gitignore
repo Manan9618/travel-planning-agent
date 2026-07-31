@@ -18,3 +18,4 @@ build/
 .DS_Store
 node_modules/
 .langsmith/
+output/

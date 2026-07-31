@@ -18,6 +18,8 @@ langgraph-checkpoint-sqlite = "^2.0"
 tenacity = "^9.0"
 requests = "^2.32"
 redis = "^5.1"
+scikit-learn = "^1.5"
+folium = "^0.18"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

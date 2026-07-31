@@ -134,6 +134,32 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] 39 new tests (budget_tracker breakdown/adherence, BudgetOptimizer allocation/
       evaluation, node-level, and updated graph-routing tests)
 
+**Phase 3, Week 9 — Geospatial Data Pipeline** — done
+
+- [x] Attractions/hotels already carry precise lat/lng directly from Serper/
+      Booking.com (Weeks 2-3) — no separate geocoding/enrichment step was needed,
+      since we'd chosen data sources that supply coordinates natively
+- [x] `DistanceMatrixTool`: real NxN travel-time matrix via Google's batched
+      Distance Matrix API — one request per origin (covering up to 100
+      destinations each) instead of N² individual pairwise calls, chunked to
+      respect Google's per-request element cap
+- [x] Shares its Redis cache-key format with Week 5's single-pair
+      `TravelTimeEstimator`, so pairs either tool has already computed are never
+      re-fetched by the other
+- [x] `geo_clustering.py`: DBSCAN clustering with a **haversine** metric (not
+      Euclidean on raw degrees, which would distort east-west vs. north-south
+      distances inconsistently across cities at different latitudes) — `eps` is
+      expressed in real-world km
+- [x] Folium map rendering, color-coded by cluster
+- [x] Live-verified clustering quality on all 3 required cities (Paris, Tokyo,
+      New York) via `scripts/geo_clustering_test.py`: geographically sensible
+      results throughout (e.g. Paris's historic center clusters together while
+      the Arc de Triomphe — genuinely ~2km further out — is correctly flagged as
+      noise; NYC splits cleanly into a Financial District cluster and a Midtown
+      cluster)
+- [x] 20 new tests, including a haversine-scaling correctness check (verifies
+      the km<->degree conversion isn't silently wrong)
+
 ## Setup
 
 ```bash
