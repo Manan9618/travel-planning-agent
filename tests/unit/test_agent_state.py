@@ -115,7 +115,7 @@ def test_build_itinerary_completed_routes_to_check_conflicts():
     assert determine_valid_steps(state) == [PlanningStep.CHECK_CONFLICTS]
 
 
-def test_check_conflicts_completed_with_no_unresolved_conflicts_returns_done():
+def test_check_conflicts_completed_routes_to_optimize_budget():
     state = {
         "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
         "completed_steps": [
@@ -131,10 +131,10 @@ def test_check_conflicts_completed_with_no_unresolved_conflicts_returns_done():
         "hotels": [{"name": "Test Hotel"}],
         "unresolved_conflicts": [],
     }
-    assert determine_valid_steps(state) == [PlanningStep.DONE]
+    assert determine_valid_steps(state) == [PlanningStep.OPTIMIZE_BUDGET]
 
 
-def test_check_conflicts_completed_with_unresolved_conflicts_routes_to_human_review():
+def test_optimize_budget_completed_with_no_unresolved_conflicts_returns_done():
     state = {
         "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
         "completed_steps": [
@@ -146,6 +146,27 @@ def test_check_conflicts_completed_with_unresolved_conflicts_routes_to_human_rev
             "check_weather",
             "build_itinerary",
             "check_conflicts",
+            "optimize_budget",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+        "unresolved_conflicts": [],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.DONE]
+
+
+def test_optimize_budget_completed_with_unresolved_conflicts_routes_to_human_review():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+            "check_conflicts",
+            "optimize_budget",
         ],
         "hotels": [{"name": "Test Hotel"}],
         "unresolved_conflicts": [{"conflict_type": "budget_overrun"}],
@@ -165,6 +186,7 @@ def test_human_review_completed_returns_done_even_with_unresolved_conflicts():
             "check_weather",
             "build_itinerary",
             "check_conflicts",
+            "optimize_budget",
             "human_review",
         ],
         "hotels": [{"name": "Test Hotel"}],

@@ -7,21 +7,45 @@ from travel_agent.models.core import BudgetSummary, Itinerary
 _ACTIVITY_TYPES = {"attraction", "restaurant"}
 
 
-def estimate_itinerary_cost(itinerary: Itinerary) -> float:
-    """Best-effort total cost: real flight/hotel prices plus whatever attraction/
-    restaurant items happen to carry a cost (restaurants always do, via
-    RestaurantFinderTool.estimate_meal_cost; attractions rarely do — Serper seldom
-    supplies a price). Used by ConflictDetector/ConflictResolver for budget checks.
+def itinerary_cost_breakdown(itinerary: Itinerary) -> dict[str, float]:
+    """Best-effort cost by category: real flight/hotel prices plus whatever
+    attraction/restaurant items happen to carry a cost (restaurants always do,
+    via RestaurantFinderTool.estimate_meal_cost; attractions rarely do — Serper
+    seldom supplies a price). Used by ConflictDetector/ConflictResolver/
+    BudgetOptimizer for budget checks.
     """
-    total = sum(f.price for f in itinerary.flights)
+    breakdown = {"flights": 0.0, "hotel": 0.0, "food": 0.0, "activities": 0.0}
+    breakdown["flights"] = sum(f.price for f in itinerary.flights)
     if itinerary.hotel:
         nights = max(len(itinerary.days) - 1, 1)
-        total += itinerary.hotel.price_per_night * nights
+        breakdown["hotel"] = itinerary.hotel.price_per_night * nights
     for day in itinerary.days:
         for item in day.items:
-            if item.activity_type in _ACTIVITY_TYPES and item.cost:
-                total += item.cost
-    return total
+            if not item.cost:
+                continue
+            if item.activity_type == "restaurant":
+                breakdown["food"] += item.cost
+            elif item.activity_type == "attraction":
+                breakdown["activities"] += item.cost
+    return breakdown
+
+
+def estimate_itinerary_cost(itinerary: Itinerary) -> float:
+    return sum(itinerary_cost_breakdown(itinerary).values())
+
+
+def budget_adherence_score(itinerary: Itinerary) -> float | None:
+    """1.0 = actual spend exactly matches the stated budget; decreases toward 0
+    the further actual spend is from budget_total, in either direction (both
+    overspending and significant underspending count against "adherence" — the
+    plan's own tips call this a target to hit, not just a ceiling to stay under).
+    None if no budget was stated, since there's nothing to measure adherence to.
+    """
+    budget = itinerary.preferences.budget_total
+    if not budget:
+        return None
+    actual = estimate_itinerary_cost(itinerary)
+    return max(0.0, 1 - abs(actual - budget) / budget)
 
 
 class BudgetTrackerTool:

@@ -113,6 +113,27 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       ItineraryBuilder scenarios including a regression test for the Week 5 bug,
       and node-level weather pass-through)
 
+**Phase 2, Week 8 — Budget Optimization & Constraint Satisfaction** — done
+
+- [x] `BudgetOptimizer`: flights are a market-price pass-through (not allocated a
+      percentage); whatever budget remains after flights is split across hotel/
+      food/activities using backpacker/mid-range/luxury tier defaults, shiftable
+      by `TravelPreferences.priority_weights` (e.g. "I prioritize accommodation
+      over dining")
+- [x] Per-category evaluation against the actual built itinerary — upgrade
+      suggestions when a category is well under its allocation, cut suggestions
+      when it's over, using `itinerary_cost_breakdown` (new in `budget_tracker.py`)
+- [x] `budget_adherence_score`: 1.0 for an exact match to the stated budget,
+      decreasing symmetrically for both overspend and underspend
+- [x] Wired into the LangGraph as an `optimize_budget` step, running after
+      conflicts are resolved so the evaluation reflects the final itinerary
+- [x] Live-verified tier splits, priority-weight shifting, and upgrade/cut
+      suggestions against real search results across all three tiers
+- [x] 20-scenario constraint satisfaction script (`scripts/budget_scenarios_test.py`)
+      spanning tiers, priority weights, and budget levels from tight to generous
+- [x] 39 new tests (budget_tracker breakdown/adherence, BudgetOptimizer allocation/
+      evaluation, node-level, and updated graph-routing tests)
+
 ## Setup
 
 ```bash

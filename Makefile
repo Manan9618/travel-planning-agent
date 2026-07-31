@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios
 
 install:
 	poetry install
@@ -26,3 +26,6 @@ smoke:
 
 weather-ab:
 	poetry run python scripts/weather_ab_test.py
+
+budget-scenarios:
+	poetry run python scripts/budget_scenarios_test.py

@@ -206,3 +206,27 @@ class ResolutionLogEntry(BaseModel):
     conflict_type: str
     action: str
     resolved: bool
+
+
+class BudgetAllocation(BaseModel):
+    flights: float = Field(ge=0)
+    hotel: float = Field(ge=0)
+    food: float = Field(ge=0)
+    activities: float = Field(ge=0)
+
+
+class CategoryEvaluation(BaseModel):
+    category: str
+    allocated: float
+    actual: float
+    difference: float = Field(description="actual - allocated; positive means over allocation")
+    status: str = Field(description="under | on_target | over")
+
+
+class BudgetEvaluation(BaseModel):
+    allocation: BudgetAllocation
+    categories: list[CategoryEvaluation]
+    total_allocated: float
+    total_actual: float
+    adherence_score: float | None
+    suggestions: list[str] = Field(default_factory=list)

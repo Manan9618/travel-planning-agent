@@ -26,6 +26,7 @@ from travel_agent.models.core import (
     WeatherForecast,
 )
 from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver, detect_and_resolve
 from travel_agent.tools.flight_search import FlightSearchTool
@@ -253,6 +254,30 @@ def make_check_conflicts_node(detector: ConflictDetector, resolver: ConflictReso
                 "unresolved_conflicts": [],
                 "completed_steps": [PlanningStep.CHECK_CONFLICTS.value],
                 "errors": [f"check_conflicts: {exc}"],
+            }
+
+    return node
+
+
+def make_optimize_budget_node(optimizer: BudgetOptimizer) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            itinerary_data = state.get("itinerary")
+            if not itinerary_data:
+                raise ValueError("no itinerary available to evaluate budget for")
+            itinerary = Itinerary(**itinerary_data)
+            evaluation = optimizer.evaluate(itinerary)
+            return {
+                "budget_evaluation": evaluation.model_dump(mode="json") if evaluation else None,
+                "completed_steps": [PlanningStep.OPTIMIZE_BUDGET.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("optimize_budget failed: %s", exc)
+            return {
+                "budget_evaluation": None,
+                "completed_steps": [PlanningStep.OPTIMIZE_BUDGET.value],
+                "errors": [f"optimize_budget: {exc}"],
             }
 
     return node

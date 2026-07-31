@@ -161,10 +161,12 @@ def test_full_graph_run_populates_every_field():
         "check_weather",
         "build_itinerary",
         "check_conflicts",
+        "optimize_budget",
     }
     assert result["itinerary"] is not None
     assert len(result["itinerary"]["days"]) == 5
     assert result["unresolved_conflicts"] == []
+    assert result["budget_evaluation"] is not None
 
 
 def test_graph_terminates_and_does_not_loop_forever():
@@ -194,6 +196,7 @@ def test_tool_failure_is_captured_without_halting_the_graph():
     assert "find_attractions" in result["completed_steps"]
     assert "build_itinerary" in result["completed_steps"]
     assert "check_conflicts" in result["completed_steps"]
+    assert "optimize_budget" in result["completed_steps"]
     assert result["itinerary"] is not None
 
 
@@ -256,6 +259,7 @@ def test_no_origin_skips_flights_but_completes_everything_else():
     assert "search_hotels" in result["completed_steps"]
     assert "check_weather" in result["completed_steps"]
     assert "check_conflicts" in result["completed_steps"]
+    assert "optimize_budget" in result["completed_steps"]
     assert "build_itinerary" in result["completed_steps"]
     assert result["itinerary"] is not None
 
@@ -291,6 +295,7 @@ def test_unresolvable_budget_conflict_pauses_at_human_review():
     )
 
     assert "check_conflicts" in result["completed_steps"]
+    assert "optimize_budget" in result["completed_steps"]
     assert "human_review" not in result["completed_steps"]
     state = graph.get_state(config)
     assert state.next == ("human_review",)

@@ -1,6 +1,9 @@
 from travel_agent.models.core import (
     Attraction,
+    BudgetAllocation,
+    BudgetEvaluation,
     BudgetSummary,
+    CategoryEvaluation,
     Conflict,
     DayPlan,
     FlightOption,
@@ -16,7 +19,10 @@ from travel_agent.models.core import (
 
 __all__ = [
     "Attraction",
+    "BudgetAllocation",
+    "BudgetEvaluation",
     "BudgetSummary",
+    "CategoryEvaluation",
     "Conflict",
     "DayPlan",
     "FlightOption",

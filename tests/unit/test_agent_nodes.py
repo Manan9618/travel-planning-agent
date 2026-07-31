@@ -7,6 +7,7 @@ from travel_agent.agents.nodes import (
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
+    make_optimize_budget_node,
     make_parse_preferences_node,
     make_search_flights_node,
     make_search_hotels_node,
@@ -370,3 +371,49 @@ def test_check_conflicts_node_no_itinerary_records_error():
     result = node({"itinerary": None})
     assert result["completed_steps"] == ["check_conflicts"]
     assert "no itinerary available" in result["errors"][0]
+
+
+# --- optimize_budget ---------------------------------------------------
+
+
+def test_optimize_budget_node_success():
+    optimizer = MagicMock()
+    fake_evaluation = MagicMock()
+    fake_evaluation.model_dump.return_value = {"adherence_score": 0.9}
+    optimizer.evaluate.return_value = fake_evaluation
+
+    node = make_optimize_budget_node(optimizer)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["budget_evaluation"] == {"adherence_score": 0.9}
+    assert result["completed_steps"] == ["optimize_budget"]
+    assert result["errors"] == []
+    optimizer.evaluate.assert_called_once()
+
+
+def test_optimize_budget_node_no_budget_set_returns_none_without_error():
+    optimizer = MagicMock()
+    optimizer.evaluate.return_value = None
+
+    node = make_optimize_budget_node(optimizer)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["budget_evaluation"] is None
+    assert result["completed_steps"] == ["optimize_budget"]
+    assert result["errors"] == []
+
+
+def test_optimize_budget_node_no_itinerary_records_error():
+    node = make_optimize_budget_node(MagicMock())
+    result = node({"itinerary": None})
+    assert result["completed_steps"] == ["optimize_budget"]
+    assert "no itinerary available" in result["errors"][0]
+
+
+def test_optimize_budget_node_optimizer_exception_records_error():
+    optimizer = MagicMock()
+    optimizer.evaluate.side_effect = RuntimeError("boom")
+    node = make_optimize_budget_node(optimizer)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+    assert result["budget_evaluation"] is None
+    assert "boom" in result["errors"][0]

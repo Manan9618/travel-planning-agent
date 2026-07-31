@@ -23,6 +23,7 @@ from travel_agent.agents.nodes import (
     make_find_attractions_node,
     make_find_restaurants_node,
     make_human_review_node,
+    make_optimize_budget_node,
     make_parse_preferences_node,
     make_search_flights_node,
     make_search_hotels_node,
@@ -30,6 +31,7 @@ from travel_agent.agents.nodes import (
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.agents.supervisor import SupervisorAgent
 from travel_agent.tools.attraction_finder import AttractionFinderTool
+from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.flight_search import FlightSearchTool
@@ -48,6 +50,7 @@ _WORKER_STEPS = [
     PlanningStep.CHECK_WEATHER,
     PlanningStep.BUILD_ITINERARY,
     PlanningStep.CHECK_CONFLICTS,
+    PlanningStep.OPTIMIZE_BUDGET,
     PlanningStep.HUMAN_REVIEW,
 ]
 
@@ -88,6 +91,7 @@ def build_planning_graph(
     itinerary_builder: ItineraryBuilder | None = None,
     conflict_detector: ConflictDetector | None = None,
     conflict_resolver: ConflictResolver | None = None,
+    budget_optimizer: BudgetOptimizer | None = None,
     supervisor: SupervisorAgent | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
@@ -100,6 +104,7 @@ def build_planning_graph(
     itinerary_builder = itinerary_builder or ItineraryBuilder()
     conflict_detector = conflict_detector or ConflictDetector()
     conflict_resolver = conflict_resolver or ConflictResolver()
+    budget_optimizer = budget_optimizer or BudgetOptimizer()
     supervisor = supervisor or SupervisorAgent()
 
     graph = StateGraph(PlanningState)
@@ -115,6 +120,7 @@ def build_planning_graph(
         PlanningStep.CHECK_CONFLICTS.value,
         make_check_conflicts_node(conflict_detector, conflict_resolver),
     )
+    graph.add_node(PlanningStep.OPTIMIZE_BUDGET.value, make_optimize_budget_node(budget_optimizer))
     graph.add_node(PlanningStep.HUMAN_REVIEW.value, make_human_review_node())
 
     graph.add_edge(START, "supervisor")
