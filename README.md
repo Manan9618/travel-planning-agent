@@ -235,6 +235,63 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       invariant, edge cases, and a performance regression test) plus 4 direct
       tests of the new `ItineraryBuilder.build_day()` entry point
 
+**Phase 3, Week 12 — Agent Evaluation Framework** — done
+
+- [x] 10-dimension rubric, split deliberately between what code can measure
+      exactly and what genuinely needs judgment:
+      - **6 computed** (`ItineraryEvaluator`, no LLM cost): `feasibility`
+        (penalizes each `ConflictDetector` conflict), `budget_accuracy`
+        (Week 8's `budget_adherence_score` × 10), `geo_efficiency` (the
+        itinerary's as-scheduled route length vs. a naive-random baseline,
+        same methodology as Week 10's `route_efficiency_score`),
+        `weather_match` (Week 7's `weather_adaptation_rate` × 10),
+        `completeness` (full-day slot-fill rate + must-see coverage), and
+        `variety` (distinct attraction categories ÷ total scheduled)
+      - **4 LLM-judged** (`ItineraryJudge`, GPT-4o — substituted for the
+        plan's "Claude grades it" to stay on this project's one established
+        LLM choice, the same kind of documented swap as TravelPayouts for
+        Amadeus): `personalization_fit`, `narrative_quality`,
+        `practicality`, `overall_satisfaction`
+      - A dimension that doesn't apply (no budget stated, no weather data in
+        range, fewer than 2 attractions scheduled) scores `None` and is
+        excluded from that itinerary's overall average rather than dragging
+        it down
+- [x] `scripts/agent_evaluation.py`: 25 real trip scenarios across 13 cities,
+      covering all 6 of the plan's named trip styles (city/beach/adventure/
+      family/solo/honeymoon) with varying budgets, tiers, pace, and
+      must-see lists; two scenarios deliberately use a near-term start date
+      so `weather_match` is exercised at least once rather than reading
+      "n/a" for every scenario (every other scenario uses a realistic
+      45-day-out start, like every prior live-test script)
+- [x] Live-run baseline results (`output/evaluation/evaluation_results.csv` +
+      `evaluation_report.html`, gitignored like other generated `output/`):
+      **5.52/10 average overall score** across all 25 scenarios;
+      `feasibility` was a perfect 10.0 on every single scenario (Weeks 5-11's
+      avoid-conflicts-by-construction approach is working)
+- [x] Investigated and root-caused the 5 lowest-scoring dimensions rather than
+      just reporting the numbers:
+      1. **`variety` (2.5/10)** — traced to Serper's `/places` API returning
+         the generic category `"Tourist attraction"` for nearly everything
+         (verified directly against live Paris results), not an actual lack
+         of diversity in what's scheduled. Improvement task: derive a finer
+         category from the attraction's name/description text, the same
+         keyword-classification approach `weather_matcher.py` already uses
+         for indoor/outdoor.
+      2. **`budget_accuracy` (3.8/10)** — the 3 worst-scoring scenarios were
+         all luxury-tier honeymoons; traced to Booking.com's exhausted
+         RapidAPI quota (documented since Week 2) forcing every scenario
+         onto the same flat mock hotel price regardless of requested tier,
+         so luxury budgets go massively underspent. Improvement task: scale
+         the mock-hotel fallback price by requested `BudgetTier`.
+      3-5. **`overall_satisfaction`, `narrative_quality`, `personalization_fit`
+         (4.4-4.5/10)** — the LLM judge's own explanations repeatedly cited
+         low attraction/restaurant variety, consistent with failure mode 1;
+         likely to improve directly once that's fixed rather than needing
+         separate work.
+- [x] 30 new tests (8 for `ItineraryJudge`'s summary rendering and structured
+      output, 22 for `ItineraryEvaluator`'s 6 computed dimensions and overall
+      report assembly); 399 total passing, 98% coverage
+
 ## Setup
 
 ```bash

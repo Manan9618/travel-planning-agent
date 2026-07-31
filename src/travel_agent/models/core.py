@@ -230,3 +230,22 @@ class BudgetEvaluation(BaseModel):
     total_actual: float
     adherence_score: float | None
     suggestions: list[str] = Field(default_factory=list)
+
+
+class DimensionScore(BaseModel):
+    name: str
+    score: float | None = Field(
+        default=None, ge=0, le=10, description="None means this dimension didn't apply"
+    )
+    method: str = Field(description="computed | llm_judge")
+    explanation: str | None = None
+
+
+class EvaluationReport(BaseModel):
+    scenario_label: str
+    dimensions: list[DimensionScore]
+    overall_score: float = Field(ge=0, le=10)
+
+    @property
+    def scores_by_name(self) -> dict[str, float | None]:
+        return {d.name: d.score for d in self.dimensions}
