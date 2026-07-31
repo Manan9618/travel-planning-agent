@@ -1,8 +1,9 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test
 
 install:
 	poetry install
 	poetry run pre-commit install
+	poetry run playwright install chromium
 
 fmt:
 	poetry run black src tests
@@ -41,3 +42,6 @@ multi-day-benchmark:
 
 evaluate:
 	poetry run python scripts/agent_evaluation.py
+
+map-test:
+	poetry run python scripts/map_generation_test.py

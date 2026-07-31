@@ -292,6 +292,50 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       output, 22 for `ItineraryEvaluator`'s 6 computed dimensions and overall
       report assembly); 399 total passing, 98% coverage
 
+**Phase 4, Week 13 — Interactive Map Generation** — done
+
+- [x] `TravelMapGenerator`: Folium/Leaflet map with a hotel pin, one pin per
+      scheduled attraction/restaurant/hotel check-in/out — color-coded by day
+      (Day 1 = blue, Day 2 = green, ... cycling through a 10-color palette)
+      with a popup info card (title, time, activity type, cost) — and a
+      polyline per day connecting that day's stops in chronological order
+- [x] `MarkerCluster` (a real Folium/Leaflet plugin, not a bespoke one) groups
+      nearby pins together at low zoom so the map stays readable
+- [x] Day-by-day reveal animation via Folium's `TimestampedGeoJson` plugin: a
+      genuine Leaflet timeline slider control: each day's route is one
+      GeoJSON feature sharing a single timestamp (that day's date), so
+      advancing the slider reveals a whole day's route at once and earlier
+      days stay visible rather than animating point-by-point
+- [x] `.save()` exports a self-contained HTML file (same Folium-file
+      convention as Week 9's cluster maps); `render_thumbnail_png()`
+      rasterizes it to PNG via a headless Chromium (Playwright, newly added
+      dependency — `make install` now also runs `playwright install
+      chromium`) for embedding in Week 14's PDF, which can't render live
+      Leaflet JS
+- [x] Wired into the LangGraph as a new `generate_map` step, running after
+      `optimize_budget` and before `human_review`; `PlanningState` gained a
+      `map_html` field
+- [x] Found and fixed a real bug while visually inspecting a live-rendered
+      thumbnail: `HotelSearchTool`'s Week 2 mock-data fallback (used whenever
+      Booking.com's RapidAPI quota is exhausted — a running known issue)
+      hardcoded the mock hotel's coordinates to `(0.0, 0.0)` ("Null Island").
+      This silently explains recurring "Distance Matrix ZERO_RESULTS"
+      fallback warnings seen in live tests since Week 9 (Google can't route
+      to/from Null Island) and, more visibly, put Week 13's map thumbnail
+      hundreds of kilometers from the actual destination. Fixed by geocoding
+      the destination via the Google Maps API (reusing the same key already
+      authenticated for Distance Matrix) as a one-shot, non-retrying
+      best-effort lookup, falling back to `(0.0, 0.0)` only if that also fails
+- [x] Live-tested via `scripts/map_generation_test.py` against two real
+      built itineraries (Paris, Tokyo — real attractions/restaurants via
+      Serper, `MultiDayOptimizer`); visually verified via the rendered PNG
+      thumbnails that the map now centers correctly, clusters pins sensibly,
+      and shows distinct day-colored routes, output under `output/maps/`
+- [x] 21 new tests (`TravelMapGenerator` structure/markers/routes/timeline/
+      export, the new `generate_map` node, and the hotel geocoding fallback,
+      including its own fallback-of-a-fallback case); 420 total passing, 98%
+      coverage
+
 ## Setup
 
 ```bash
@@ -318,4 +362,4 @@ tests/
 ## Tech stack
 
 Python 3.11+, LangGraph + LangChain, OpenAI GPT-4o, FastAPI, React (added later phases),
-PostgreSQL + Redis, Docker, pytest.
+PostgreSQL + Redis, Docker, pytest, Folium, Playwright.

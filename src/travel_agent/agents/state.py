@@ -22,6 +22,7 @@ class PlanningStep(str, Enum):
     BUILD_ITINERARY = "build_itinerary"
     CHECK_CONFLICTS = "check_conflicts"
     OPTIMIZE_BUDGET = "optimize_budget"
+    GENERATE_MAP = "generate_map"
     HUMAN_REVIEW = "human_review"
     DONE = "done"
 
@@ -38,6 +39,7 @@ class PlanningState(TypedDict, total=False):
     conflict_log: list[dict]
     unresolved_conflicts: list[dict]
     budget_evaluation: dict | None
+    map_html: str | None
     next_step: str
     completed_steps: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
@@ -80,6 +82,8 @@ def determine_valid_steps(state: PlanningState) -> list[PlanningStep]:
             return [PlanningStep.CHECK_CONFLICTS]
         if PlanningStep.OPTIMIZE_BUDGET.value not in completed:
             return [PlanningStep.OPTIMIZE_BUDGET]
+        if PlanningStep.GENERATE_MAP.value not in completed:
+            return [PlanningStep.GENERATE_MAP]
         if state.get("unresolved_conflicts") and PlanningStep.HUMAN_REVIEW.value not in completed:
             return [PlanningStep.HUMAN_REVIEW]
     return [PlanningStep.DONE]

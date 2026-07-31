@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 HOST = "booking-com15.p.rapidapi.com"
 BASE_URL = f"https://{HOST}"
+GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 CACHE_TTL_SECONDS = 24 * 3600
 TIMEOUT = 10
 
@@ -173,6 +174,7 @@ class HotelSearchTool:
     # --- fallback -----------------------------------------------------
 
     def _mock_hotels(self, location: str, check_in: date, check_out: date) -> list[HotelOption]:
+        lat, lng = self._geocode_fallback(location)
         base_price = 90.0
         mocks = []
         for i in range(5):
@@ -180,8 +182,8 @@ class HotelSearchTool:
                 HotelOption(
                     name=f"{location} Mock Hotel {i + 1}",
                     address=f"Mock Address {i + 1}, {location}",
-                    lat=0.0,
-                    lng=0.0,
+                    lat=lat,
+                    lng=lng,
                     rating=7.0 + i * 0.4,
                     price_per_night=base_price + i * 35,
                     currency="USD",
@@ -190,3 +192,32 @@ class HotelSearchTool:
                 )
             )
         return mocks
+
+    def _geocode_fallback(self, location: str) -> tuple[float, float]:
+        """Best-effort city-center coordinates for the mock-hotel fallback.
+
+        Previously hardcoded to (0.0, 0.0) ("Null Island") — harmless-looking,
+        but it silently broke every distance calculation anchored on the
+        hotel (explaining recurring Distance Matrix "ZERO_RESULTS" fallbacks
+        seen in live tests since Week 9) and skewed any map centered on the
+        itinerary (found while visually inspecting Week 13's map thumbnails).
+        Reuses the Google Maps API key already authenticated for Distance
+        Matrix rather than adding a new provider/credential. A single
+        best-effort attempt, no retries: this only runs after the primary
+        Booking.com lookup has already failed, so it shouldn't add its own
+        retry delay on top before falling back to (0.0, 0.0) as a last resort.
+        """
+        try:
+            resp = requests.get(
+                GEOCODE_URL,
+                params={"address": location, "key": settings.google_maps_api_key},
+                timeout=TIMEOUT,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results") or []
+            if results:
+                loc = results[0]["geometry"]["location"]
+                return loc["lat"], loc["lng"]
+        except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+            logger.warning("Geocoding fallback failed for %s: %s", location, exc)
+        return 0.0, 0.0

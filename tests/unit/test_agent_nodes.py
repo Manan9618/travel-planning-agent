@@ -7,6 +7,7 @@ from travel_agent.agents.nodes import (
     make_check_weather_node,
     make_find_attractions_node,
     make_find_restaurants_node,
+    make_generate_map_node,
     make_optimize_budget_node,
     make_parse_preferences_node,
     make_search_flights_node,
@@ -416,4 +417,37 @@ def test_optimize_budget_node_optimizer_exception_records_error():
     node = make_optimize_budget_node(optimizer)
     result = node({"itinerary": _minimal_itinerary_dict()})
     assert result["budget_evaluation"] is None
+    assert "boom" in result["errors"][0]
+
+
+# --- generate_map ---------------------------------------------------
+
+
+def test_generate_map_node_success():
+    generator = MagicMock()
+    generator.render_html.return_value = "<html>map</html>"
+
+    node = make_generate_map_node(generator)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["map_html"] == "<html>map</html>"
+    assert result["completed_steps"] == ["generate_map"]
+    assert result["errors"] == []
+    generator.render_html.assert_called_once()
+
+
+def test_generate_map_node_no_itinerary_records_error():
+    node = make_generate_map_node(MagicMock())
+    result = node({"itinerary": None})
+    assert result["completed_steps"] == ["generate_map"]
+    assert result["map_html"] is None
+    assert "no itinerary available" in result["errors"][0]
+
+
+def test_generate_map_node_generator_exception_records_error():
+    generator = MagicMock()
+    generator.render_html.side_effect = RuntimeError("boom")
+    node = make_generate_map_node(generator)
+    result = node({"itinerary": _minimal_itinerary_dict()})
+    assert result["map_html"] is None
     assert "boom" in result["errors"][0]

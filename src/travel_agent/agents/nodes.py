@@ -35,6 +35,7 @@ from travel_agent.tools.itinerary_builder import ItineraryBuilder
 from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
+from travel_agent.tools.travel_map_generator import TravelMapGenerator
 from travel_agent.tools.weather_checker import WeatherCheckerTool
 from travel_agent.utils.iata import city_to_iata
 
@@ -279,6 +280,30 @@ def make_optimize_budget_node(optimizer: BudgetOptimizer) -> Node:
                 "budget_evaluation": None,
                 "completed_steps": [PlanningStep.OPTIMIZE_BUDGET.value],
                 "errors": [f"optimize_budget: {exc}"],
+            }
+
+    return node
+
+
+def make_generate_map_node(generator: TravelMapGenerator) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            itinerary_data = state.get("itinerary")
+            if not itinerary_data:
+                raise ValueError("no itinerary available to generate a map from")
+            itinerary = Itinerary(**itinerary_data)
+            map_html = generator.render_html(itinerary)
+            return {
+                "map_html": map_html,
+                "completed_steps": [PlanningStep.GENERATE_MAP.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("generate_map failed: %s", exc)
+            return {
+                "map_html": None,
+                "completed_steps": [PlanningStep.GENERATE_MAP.value],
+                "errors": [f"generate_map: {exc}"],
             }
 
     return node

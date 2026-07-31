@@ -140,6 +140,32 @@ def test_destination_not_found_falls_back_to_mock(fake_cache):
     assert all(h.is_mock_data for h in results)
 
 
+GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
+@responses.activate
+def test_mock_hotel_uses_geocoded_coordinates_when_available(fake_cache):
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    responses.add(
+        responses.GET,
+        GEOCODE_URL,
+        json={"results": [{"geometry": {"location": {"lat": 48.8566, "lng": 2.3522}}}]},
+        status=200,
+    )
+    results = _tool(fake_cache).search("Paris", CHECK_IN, CHECK_OUT)
+    assert all(h.is_mock_data for h in results)
+    assert all(h.lat == 48.8566 and h.lng == 2.3522 for h in results)
+
+
+@responses.activate
+def test_mock_hotel_falls_back_to_null_island_when_geocoding_also_fails(fake_cache):
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    responses.add(responses.GET, GEOCODE_URL, json={"results": []}, status=200)
+    results = _tool(fake_cache).search("Nowhereville", CHECK_IN, CHECK_OUT)
+    assert all(h.is_mock_data for h in results)
+    assert all(h.lat == 0.0 and h.lng == 0.0 for h in results)
+
+
 @responses.activate
 def test_no_hotels_in_results_falls_back_to_mock(fake_cache):
     responses.add(responses.GET, DEST_URL, json=_dest_body(), status=200)
