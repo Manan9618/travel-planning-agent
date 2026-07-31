@@ -8,6 +8,7 @@ from travel_agent.agents.nodes import (
     make_find_attractions_node,
     make_find_restaurants_node,
     make_generate_map_node,
+    make_generate_pdf_node,
     make_optimize_budget_node,
     make_parse_preferences_node,
     make_search_flights_node,
@@ -451,3 +452,81 @@ def test_generate_map_node_generator_exception_records_error():
     result = node({"itinerary": _minimal_itinerary_dict()})
     assert result["map_html"] is None
     assert "boom" in result["errors"][0]
+
+
+# --- generate_pdf ---------------------------------------------------
+# render_map_thumbnail=False in every test here: thumbnail rasterization uses
+# a real headless browser (Week 13), which is covered by its own dedicated
+# test and the live-test script — node-level tests just verify wiring.
+
+
+def test_generate_pdf_node_success(tmp_path):
+    pdf_generator = MagicMock()
+    map_generator = MagicMock()
+    node = make_generate_pdf_node(
+        pdf_generator, map_generator, output_dir=str(tmp_path), render_map_thumbnail=False
+    )
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["completed_steps"] == ["generate_pdf"]
+    assert result["errors"] == []
+    assert result["pdf_path"].startswith(str(tmp_path))
+    assert "paris" in result["pdf_path"].lower()
+    pdf_generator.generate.assert_called_once()
+    _, kwargs = pdf_generator.generate.call_args
+    assert kwargs["map_thumbnail_path"] is None
+    map_generator.save.assert_not_called()  # skipped since render_map_thumbnail=False
+
+
+def test_generate_pdf_node_passes_budget_evaluation_through(tmp_path):
+    pdf_generator = MagicMock()
+    node = make_generate_pdf_node(
+        pdf_generator, MagicMock(), output_dir=str(tmp_path), render_map_thumbnail=False
+    )
+    budget_data = {
+        "allocation": {"flights": 0, "hotel": 100, "food": 50, "activities": 50},
+        "categories": [],
+        "total_allocated": 200,
+        "total_actual": 150,
+        "adherence_score": 0.9,
+        "suggestions": [],
+    }
+    node({"itinerary": _minimal_itinerary_dict(), "budget_evaluation": budget_data})
+    _, kwargs = pdf_generator.generate.call_args
+    assert kwargs["budget_evaluation"].adherence_score == 0.9
+
+
+def test_generate_pdf_node_no_itinerary_records_error(tmp_path):
+    node = make_generate_pdf_node(
+        MagicMock(), MagicMock(), output_dir=str(tmp_path), render_map_thumbnail=False
+    )
+    result = node({"itinerary": None})
+    assert result["completed_steps"] == ["generate_pdf"]
+    assert result["pdf_path"] is None
+    assert "no itinerary available" in result["errors"][0]
+
+
+def test_generate_pdf_node_generator_exception_records_error(tmp_path):
+    pdf_generator = MagicMock()
+    pdf_generator.generate.side_effect = RuntimeError("boom")
+    node = make_generate_pdf_node(
+        pdf_generator, MagicMock(), output_dir=str(tmp_path), render_map_thumbnail=False
+    )
+    result = node({"itinerary": _minimal_itinerary_dict()})
+    assert result["pdf_path"] is None
+    assert "boom" in result["errors"][0]
+
+
+def test_generate_pdf_node_thumbnail_failure_is_non_fatal(tmp_path):
+    pdf_generator = MagicMock()
+    map_generator = MagicMock()
+    map_generator.save.side_effect = RuntimeError("browser unavailable")
+    node = make_generate_pdf_node(
+        pdf_generator, map_generator, output_dir=str(tmp_path), render_map_thumbnail=True
+    )
+    result = node({"itinerary": _minimal_itinerary_dict()})
+
+    assert result["errors"] == []  # thumbnail failure doesn't fail the whole step
+    assert result["completed_steps"] == ["generate_pdf"]
+    _, kwargs = pdf_generator.generate.call_args
+    assert kwargs["map_thumbnail_path"] is None

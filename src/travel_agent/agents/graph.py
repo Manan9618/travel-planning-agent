@@ -23,6 +23,7 @@ from travel_agent.agents.nodes import (
     make_find_attractions_node,
     make_find_restaurants_node,
     make_generate_map_node,
+    make_generate_pdf_node,
     make_human_review_node,
     make_optimize_budget_node,
     make_parse_preferences_node,
@@ -39,6 +40,7 @@ from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
 from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
+from travel_agent.tools.pdf_generator import PDFGenerator
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.travel_map_generator import TravelMapGenerator
@@ -55,6 +57,7 @@ _WORKER_STEPS = [
     PlanningStep.CHECK_CONFLICTS,
     PlanningStep.OPTIMIZE_BUDGET,
     PlanningStep.GENERATE_MAP,
+    PlanningStep.GENERATE_PDF,
     PlanningStep.HUMAN_REVIEW,
 ]
 
@@ -97,6 +100,9 @@ def build_planning_graph(
     conflict_resolver: ConflictResolver | None = None,
     budget_optimizer: BudgetOptimizer | None = None,
     map_generator: TravelMapGenerator | None = None,
+    pdf_generator: PDFGenerator | None = None,
+    pdf_output_dir: str = "output/pdfs",
+    render_pdf_map_thumbnail: bool = True,
     supervisor: SupervisorAgent | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
@@ -115,6 +121,7 @@ def build_planning_graph(
     conflict_resolver = conflict_resolver or ConflictResolver()
     budget_optimizer = budget_optimizer or BudgetOptimizer()
     map_generator = map_generator or TravelMapGenerator()
+    pdf_generator = pdf_generator or PDFGenerator()
     supervisor = supervisor or SupervisorAgent()
 
     graph = StateGraph(PlanningState)
@@ -132,6 +139,15 @@ def build_planning_graph(
     )
     graph.add_node(PlanningStep.OPTIMIZE_BUDGET.value, make_optimize_budget_node(budget_optimizer))
     graph.add_node(PlanningStep.GENERATE_MAP.value, make_generate_map_node(map_generator))
+    graph.add_node(
+        PlanningStep.GENERATE_PDF.value,
+        make_generate_pdf_node(
+            pdf_generator,
+            map_generator,
+            output_dir=pdf_output_dir,
+            render_map_thumbnail=render_pdf_map_thumbnail,
+        ),
+    )
     graph.add_node(PlanningStep.HUMAN_REVIEW.value, make_human_review_node())
 
     graph.add_edge(START, "supervisor")

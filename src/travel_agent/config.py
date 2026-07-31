@@ -16,6 +16,8 @@ class Settings:
     serper_api_key: str = os.getenv("SERPER_API_KEY", "")
     tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
 
+    unsplash_access_key: str = os.getenv("UNSPLASH_ACCESS_KEY", "")
+
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     database_url: str = os.getenv("DATABASE_URL", "")
 

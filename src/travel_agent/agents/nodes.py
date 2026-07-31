@@ -9,15 +9,20 @@ themselves already retry transient failures and fall back to mock data internall
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import tempfile
+import uuid
 from collections.abc import Callable
 from datetime import date, timedelta
+from pathlib import Path
 
 from langgraph.types import interrupt
 
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.models.core import (
     Attraction,
+    BudgetEvaluation,
     FlightOption,
     HotelOption,
     Itinerary,
@@ -33,9 +38,10 @@ from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
 from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
+from travel_agent.tools.pdf_generator import PDFGenerator
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
-from travel_agent.tools.travel_map_generator import TravelMapGenerator
+from travel_agent.tools.travel_map_generator import TravelMapGenerator, render_thumbnail_png
 from travel_agent.tools.weather_checker import WeatherCheckerTool
 from travel_agent.utils.iata import city_to_iata
 
@@ -304,6 +310,73 @@ def make_generate_map_node(generator: TravelMapGenerator) -> Node:
                 "map_html": None,
                 "completed_steps": [PlanningStep.GENERATE_MAP.value],
                 "errors": [f"generate_map: {exc}"],
+            }
+
+    return node
+
+
+def make_generate_pdf_node(
+    pdf_generator: PDFGenerator,
+    map_generator: TravelMapGenerator,
+    output_dir: str = "output/pdfs",
+    render_map_thumbnail: bool = True,
+) -> Node:
+    """Renders the professional PDF itinerary (Week 14). A map thumbnail is
+    rasterized fresh from the itinerary (Week 13's TravelMapGenerator +
+    render_thumbnail_png) and embedded; if that rasterization fails for any
+    reason (e.g. no headless browser installed), the PDF still generates,
+    just without the embedded map image — the same graceful-degradation
+    pattern used throughout this project rather than blocking the whole step
+    on a non-essential piece. `render_map_thumbnail=False` skips it entirely
+    (used by fast offline tests to avoid a real browser launch per run).
+    """
+
+    def node(state: PlanningState) -> dict:
+        try:
+            itinerary_data = state.get("itinerary")
+            if not itinerary_data:
+                raise ValueError("no itinerary available to generate a PDF from")
+            itinerary = Itinerary(**itinerary_data)
+            budget_data = state.get("budget_evaluation")
+            budget_evaluation = BudgetEvaluation(**budget_data) if budget_data else None
+
+            out_dir = Path(output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            slug = itinerary.preferences.destination.lower().replace(" ", "_")
+            output_path = out_dir / f"{slug}_{uuid.uuid4().hex[:8]}.pdf"
+
+            with (
+                tempfile.TemporaryDirectory() if render_map_thumbnail else contextlib.nullcontext()
+            ) as tmp_dir:
+                map_thumbnail_path = None
+                if render_map_thumbnail:
+                    try:
+                        tmp_html = Path(tmp_dir) / "map.html"
+                        tmp_png = Path(tmp_dir) / "map.png"
+                        map_generator.save(itinerary, tmp_html)
+                        render_thumbnail_png(tmp_html, tmp_png)
+                        map_thumbnail_path = tmp_png
+                    except Exception as exc:
+                        logger.warning("map thumbnail rasterization failed for PDF: %s", exc)
+
+                pdf_generator.generate(
+                    itinerary,
+                    output_path,
+                    budget_evaluation=budget_evaluation,
+                    map_thumbnail_path=map_thumbnail_path,
+                )
+
+            return {
+                "pdf_path": str(output_path),
+                "completed_steps": [PlanningStep.GENERATE_PDF.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("generate_pdf failed: %s", exc)
+            return {
+                "pdf_path": None,
+                "completed_steps": [PlanningStep.GENERATE_PDF.value],
+                "errors": [f"generate_pdf: {exc}"],
             }
 
     return node

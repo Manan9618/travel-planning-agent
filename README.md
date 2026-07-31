@@ -336,6 +336,48 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       including its own fallback-of-a-fallback case); 420 total passing, 98%
       coverage
 
+**Phase 4, Week 14 — PDF Itinerary Generator** — done
+
+- [x] `PDFGenerator` (WeasyPrint — HTML/CSS rendered straight to PDF, no
+      headless browser needed, unlike Week 13's map thumbnails): a cover page,
+      an executive summary, one section per day, an embedded map thumbnail
+      with an optional QR code, and a budget breakdown table
+- [x] Cover page: destination + dates + trip style, with a photo background
+      via a new `UnsplashPhotoTool` when `UNSPLASH_ACCESS_KEY` is configured
+      (with photographer attribution, per Unsplash's API terms), falling back
+      to a clean CSS gradient — and gracefully so, exactly like every other
+      external-API tool in this project — when no key is set or the lookup/
+      download fails. No Unsplash key is configured yet; verified both code
+      paths directly (photo present vs. gradient fallback) since only the
+      fallback path runs in this environment today
+- [x] Day sections reuse Week 13's `day_color()` so a day's PDF badge and its
+      map pins/routes share the same color across both artifacts
+- [x] Map section embeds a real Week 13 `render_thumbnail_png()` screenshot
+      as a base64 image, plus a QR code (new `qrcode` dependency) linking to
+      the interactive map — only rendered when a real URL is supplied, since
+      there's no hosted map until Week 15's FastAPI backend exists
+- [x] Budget table renders Week 8's `BudgetEvaluation` (category/allocated/
+      actual/status, color-coded, plus adherence score and upgrade/cut
+      suggestions) when available, falling back to just the estimated total
+      when no budget was stated
+- [x] Wired into the LangGraph as a new `generate_pdf` step (after
+      `generate_map`, before `human_review`); `PlanningState` gained a
+      `pdf_path` field. Thumbnail rasterization failure is non-fatal — the
+      PDF still generates without the embedded map image, the same
+      graceful-degradation pattern used everywhere else in this project
+- [x] Live-tested via `scripts/pdf_generation_test.py` across 10 real
+      itineraries spanning the full trip-length range the plan calls for
+      (2 to 14 days, across 5 cities) — every PDF validated with `pypdf`
+      (opens correctly, has the expected page count, extracted text contains
+      the destination and every day header). Visually spot-checked the
+      2-day and 14-day extremes: page-break rules (`page-break-inside:
+      avoid` per section) held up correctly even at 14 days/5 pages, with
+      day badges correctly cycling through the full 10-color palette
+- [x] 33 new tests (`PDFGenerator` sections/cover/budget/map/QR via both
+      HTML-fragment assertions and real `pypdf` content extraction,
+      `UnsplashPhotoTool`'s success/failure/caching paths, and the new
+      `generate_pdf` node); 453 total passing, 98% coverage
+
 ## Setup
 
 ```bash
@@ -362,4 +404,4 @@ tests/
 ## Tech stack
 
 Python 3.11+, LangGraph + LangChain, OpenAI GPT-4o, FastAPI, React (added later phases),
-PostgreSQL + Redis, Docker, pytest, Folium, Playwright.
+PostgreSQL + Redis, Docker, pytest, Folium, Playwright, WeasyPrint, qrcode.

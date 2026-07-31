@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test
 
 install:
 	poetry install
@@ -45,3 +45,6 @@ evaluate:
 
 map-test:
 	poetry run python scripts/map_generation_test.py
+
+pdf-test:
+	poetry run python scripts/pdf_generation_test.py

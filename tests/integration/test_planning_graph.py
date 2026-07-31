@@ -7,6 +7,7 @@ re-testing individual tools (see the Week 2/3 unit suites) or the real Superviso
 """
 
 import sqlite3
+import tempfile
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
@@ -24,6 +25,7 @@ from travel_agent.models.core import (
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
+from travel_agent.tools.pdf_generator import PDFGenerator
 
 
 class FixedTravelTime:
@@ -123,6 +125,12 @@ def _build_test_graph(checkpointer, flight_tool=None, parser=None):
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
         conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
         conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
+        pdf_generator=PDFGenerator(),
+        pdf_output_dir=tempfile.mkdtemp(),
+        # Skips the real headless-browser map-thumbnail rasterization (Week
+        # 13) in these offline graph-wiring tests — that path has its own
+        # dedicated test (test_travel_map_generator.py) and live-test script.
+        render_pdf_map_thumbnail=False,
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -163,12 +171,14 @@ def test_full_graph_run_populates_every_field():
         "check_conflicts",
         "optimize_budget",
         "generate_map",
+        "generate_pdf",
     }
     assert result["itinerary"] is not None
     assert len(result["itinerary"]["days"]) == 5
     assert result["unresolved_conflicts"] == []
     assert result["budget_evaluation"] is not None
     assert result["map_html"] is not None
+    assert result["pdf_path"] is not None
     assert "leaflet" in result["map_html"].lower()
 
 
@@ -201,6 +211,7 @@ def test_tool_failure_is_captured_without_halting_the_graph():
     assert "check_conflicts" in result["completed_steps"]
     assert "optimize_budget" in result["completed_steps"]
     assert "generate_map" in result["completed_steps"]
+    assert "generate_pdf" in result["completed_steps"]
     assert result["itinerary"] is not None
 
 
@@ -250,6 +261,9 @@ def test_no_origin_skips_flights_but_completes_everything_else():
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
         conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
         conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
+        pdf_generator=PDFGenerator(),
+        pdf_output_dir=tempfile.mkdtemp(),
+        render_pdf_map_thumbnail=False,
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
@@ -265,6 +279,7 @@ def test_no_origin_skips_flights_but_completes_everything_else():
     assert "check_conflicts" in result["completed_steps"]
     assert "optimize_budget" in result["completed_steps"]
     assert "generate_map" in result["completed_steps"]
+    assert "generate_pdf" in result["completed_steps"]
     assert "build_itinerary" in result["completed_steps"]
     assert result["itinerary"] is not None
 
@@ -302,6 +317,7 @@ def test_unresolvable_budget_conflict_pauses_at_human_review():
     assert "check_conflicts" in result["completed_steps"]
     assert "optimize_budget" in result["completed_steps"]
     assert "generate_map" in result["completed_steps"]
+    assert "generate_pdf" in result["completed_steps"]
     assert "human_review" not in result["completed_steps"]
     state = graph.get_state(config)
     assert state.next == ("human_review",)
