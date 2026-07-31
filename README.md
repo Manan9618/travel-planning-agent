@@ -160,6 +160,28 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] 20 new tests, including a haversine-scaling correctness check (verifies
       the km<->degree conversion isn't silently wrong)
 
+**Phase 3, Week 10 — Route Optimization** — done
+
+- [x] `RouteOptimizerTool`: Nearest Neighbor construction (greedy TSP
+      approximation) followed by 2-opt local search, with the hotel as a fixed
+      start/end point ("start near hotel, end near hotel")
+- [x] Correctly handles **asymmetric** travel times (real driving/transit data
+      reflects one-way streets and transit-line directionality, so A→B and B→A
+      legitimately differ) — 2-opt recomputes the full tour length per candidate
+      swap rather than taking the classic boundary-edges-only shortcut, which is
+      only valid for symmetric distances. Verified with an adversarial regression
+      test where the boundary-only shortcut would accept a swap that's actually
+      far worse once a flipped internal edge is accounted for
+- [x] `route_efficiency_score`: naive/optimized travel-time ratio, with the naive
+      baseline averaged over multiple random shuffles rather than a single one
+- [x] 20-scenario benchmark (`scripts/route_optimization_benchmark.py`, 5 real
+      cities × 4 activity-set sizes) against a real Distance Matrix: **+45%
+      average efficiency gain** over random ordering (range +10% to +92%,
+      generally scaling up with more activities per day, as expected)
+- [x] 19 new tests, including the asymmetric-matrix correctness regression and
+      an invariant check that 2-opt never produces a worse tour than plain
+      Nearest Neighbor across 20 randomized matrices
+
 ## Setup
 
 ```bash
