@@ -357,6 +357,63 @@ def test_no_forecast_for_a_day_falls_back_to_original_order():
     assert day3_titles == ["Central Park", "Botanical Garden"]  # the two remaining, in order
 
 
+# --- build_day() public entry point (Week 11 integration point) ------------
+
+
+def test_build_day_full_scopes_pick_attraction_to_just_the_given_list():
+    # MultiDayOptimizer calls build_day() with exactly the 2 attractions it has
+    # already decided belong on this day, and a fresh (default) used-indices
+    # set — both should be scheduled, not just the first one
+    day_plan = _builder().build_day(
+        2,
+        date(2026, 9, 2),
+        "full",
+        _hotel(),
+        RESTAURANTS,
+        attractions=[_attraction("Only A"), _attraction("Only B")],
+    )
+    titles = {i.title for i in day_plan.items if i.activity_type == "attraction"}
+    assert titles == {"Only A", "Only B"}
+
+
+def test_build_day_full_sets_weather_and_warnings():
+    forecast = WeatherForecast(
+        day=date(2026, 9, 2),
+        condition="Rain",
+        temp_high_c=18,
+        temp_low_c=12,
+        rain_probability=0.9,
+        wind_speed_kph=10,
+        comfort_score=3.0,
+    )
+    day_plan = _builder().build_day(
+        2,
+        date(2026, 9, 2),
+        "full",
+        _hotel(),
+        RESTAURANTS,
+        attractions=[_attraction("A"), _attraction("B")],
+        forecast=forecast,
+    )
+    assert day_plan.weather == forecast
+    assert any("rain gear" in w for w in day_plan.warnings)
+
+
+def test_build_day_arrival_matches_build_arrival_day_behavior():
+    flight = _flight(arrival_time="2026-09-01T14:00:00")
+    day_plan = _builder().build_day(
+        1, date(2026, 9, 1), "arrival", _hotel(), RESTAURANTS, flight=flight, destination="Paris"
+    )
+    types = [item.activity_type for item in day_plan.items]
+    assert types[:3] == ["flight", "transfer", "hotel_checkin"]
+
+
+def test_build_day_departure_matches_build_departure_day_behavior():
+    day_plan = _builder().build_day(5, date(2026, 9, 5), "departure", _hotel(), RESTAURANTS)
+    types = [item.activity_type for item in day_plan.items]
+    assert types == ["hotel_checkout", "transfer"]
+
+
 def test_first_full_day_uses_top_rated_attractions_not_skipped():
     # regression check: previously the first two attractions (highest-rated, since
     # AttractionFinderTool sorts by rating) were silently never scheduled because

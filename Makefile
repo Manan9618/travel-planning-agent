@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark
 
 install:
 	poetry install
@@ -35,3 +35,6 @@ geo-clusters:
 
 route-benchmark:
 	poetry run python scripts/route_optimization_benchmark.py
+
+multi-day-benchmark:
+	poetry run python scripts/multi_day_optimizer_benchmark.py

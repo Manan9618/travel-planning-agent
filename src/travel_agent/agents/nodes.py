@@ -32,6 +32,7 @@ from travel_agent.tools.conflict_resolver import ConflictResolver, detect_and_re
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
+from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
@@ -199,7 +200,7 @@ def make_check_weather_node(tool: WeatherCheckerTool) -> Node:
     return node
 
 
-def make_build_itinerary_node(builder: ItineraryBuilder) -> Node:
+def make_build_itinerary_node(builder: ItineraryBuilder | MultiDayOptimizer) -> Node:
     def node(state: PlanningState) -> dict:
         try:
             hotels = state.get("hotels") or []

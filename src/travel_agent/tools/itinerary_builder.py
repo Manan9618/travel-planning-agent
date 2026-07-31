@@ -68,6 +68,21 @@ def _slot_for_time(t: time) -> str:
     return "evening"
 
 
+def trip_dates(preferences: TravelPreferences) -> list[date]:
+    """The ordered list of calendar dates the trip covers. Shared by `build()`
+    and by Week 11's `MultiDayOptimizer`, which needs the same day-count/
+    day-type logic before it decides which attractions go on which day.
+    """
+    start = preferences.start_date or (date.today() + timedelta(days=30))
+    if preferences.end_date:
+        end = preferences.end_date
+    else:
+        duration = preferences.duration_days or DEFAULT_TRIP_LENGTH_DAYS
+        end = start + timedelta(days=duration - 1)
+    num_days = max((end - start).days + 1, 1)
+    return [start + timedelta(days=i) for i in range(num_days)]
+
+
 class ItineraryBuilder:
     def __init__(self, travel_time_estimator: TravelTimeEstimator | None = None) -> None:
         self._travel_time = travel_time_estimator or TravelTimeEstimator()
@@ -81,40 +96,42 @@ class ItineraryBuilder:
         flight: FlightOption | None = None,
         weather: list[WeatherForecast] | None = None,
     ) -> Itinerary:
-        start = preferences.start_date or (date.today() + timedelta(days=30))
-        if preferences.end_date:
-            end = preferences.end_date
-        else:
-            duration = preferences.duration_days or DEFAULT_TRIP_LENGTH_DAYS
-            end = start + timedelta(days=duration - 1)
-        num_days = max((end - start).days + 1, 1)
+        dates = trip_dates(preferences)
+        num_days = len(dates)
 
         weather_by_date = {w.day: w for w in (weather or [])}
         used_attraction_indices: set[int] = set()
 
         days: list[DayPlan] = []
-        for day_index in range(num_days):
-            current_date = start + timedelta(days=day_index)
+        for day_index, current_date in enumerate(dates):
             day_number = day_index + 1
             forecast = weather_by_date.get(current_date)
             if day_index == 0:
-                day_plan = self._build_arrival_day(
-                    day_number, current_date, hotel, flight, restaurants, preferences.destination
-                )
-            elif day_index == num_days - 1:
-                day_plan = self._build_departure_day(day_number, current_date, hotel)
-            else:
-                day_plan = self._build_full_day(
+                day_plan = self.build_day(
                     day_number,
                     current_date,
+                    "arrival",
                     hotel,
-                    attractions,
                     restaurants,
-                    used_attraction_indices,
-                    forecast,
+                    flight=flight,
+                    destination=preferences.destination,
+                    forecast=forecast,
                 )
-            day_plan.weather = forecast
-            day_plan.warnings = self._weather_warnings(forecast)
+            elif day_index == num_days - 1:
+                day_plan = self.build_day(
+                    day_number, current_date, "departure", hotel, restaurants, forecast=forecast
+                )
+            else:
+                day_plan = self.build_day(
+                    day_number,
+                    current_date,
+                    "full",
+                    hotel,
+                    restaurants,
+                    attractions=attractions,
+                    forecast=forecast,
+                    used_attraction_indices=used_attraction_indices,
+                )
             days.append(day_plan)
 
         return Itinerary(
@@ -123,6 +140,44 @@ class ItineraryBuilder:
             flights=[flight] if flight else [],
             hotel=hotel,
         )
+
+    def build_day(
+        self,
+        day_number: int,
+        current_date: date,
+        day_type: str,
+        hotel: HotelOption,
+        restaurants: list[Restaurant],
+        attractions: list[Attraction] | None = None,
+        flight: FlightOption | None = None,
+        destination: str | None = None,
+        forecast: WeatherForecast | None = None,
+        used_attraction_indices: set[int] | None = None,
+    ) -> DayPlan:
+        """Public single-day entry point. `day_type` is "arrival" | "full" | "departure".
+
+        Week 11's `MultiDayOptimizer` calls this directly once it has already
+        decided (via clustering + priority + budget-aware backtracking) exactly
+        which attractions belong on a given "full" day — passing just that day's
+        attractions with a fresh `used_attraction_indices` scopes `_pick_attraction`
+        to choose only among them (still weather-reordering within that set).
+        `build()` above instead shares one growing set across every full day, so
+        attractions aren't repeated across the whole trip.
+        """
+        if day_type == "arrival":
+            day_plan = self._build_arrival_day(
+                day_number, current_date, hotel, flight, restaurants, destination or ""
+            )
+        elif day_type == "departure":
+            day_plan = self._build_departure_day(day_number, current_date, hotel)
+        else:
+            used = used_attraction_indices if used_attraction_indices is not None else set()
+            day_plan = self._build_full_day(
+                day_number, current_date, hotel, attractions or [], restaurants, used, forecast
+            )
+        day_plan.weather = forecast
+        day_plan.warnings = self._weather_warnings(forecast)
+        return day_plan
 
     # --- day builders ------------------------------------------------------
 

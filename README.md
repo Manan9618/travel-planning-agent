@@ -182,6 +182,59 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       an invariant check that 2-opt never produces a worse tour than plain
       Nearest Neighbor across 20 randomized matrices
 
+**Phase 3, Week 11 — Multi-Day Itinerary Optimizer** — done
+
+- [x] `MultiDayOptimizer` sits above `ItineraryBuilder`: it decides WHICH
+      attractions go on WHICH day (clustering + must-see priority + a bounded
+      backtracking search against a per-day activity budget), route-optimizes
+      each day's visiting order, and rebalances walking distance across days —
+      then delegates the actual time-slot/weather-swap mechanics to a new
+      `ItineraryBuilder.build_day()` public method, reusing the tested Week 5/7
+      logic rather than duplicating it
+- [x] Priority-based scheduling: `TravelPreferences.must_see` attractions are
+      sorted first (by rating) ahead of "nice-to-have" ones, which are grouped
+      by geographic cluster (largest cluster first) so nearby attractions tend
+      to land on the same day
+- [x] Real backtracking (not just greedy): candidate day-assignments are tried
+      highest-priority-first; a combination that would push a day's estimated
+      cost over its soft per-day activity budget (derived from Week 8's
+      `BudgetOptimizer`) is rejected and the search backtracks to the next
+      combination — undoing and retrying rather than committing to the first
+      guess. Falls back to the cheapest available combination if none fit, so
+      a day is never left empty
+- [x] Cross-day balancing: after initial assignment, the day with the most
+      total travel time and the day with the least repeatedly try swapping one
+      attraction between them, keeping the swap only if it narrows the spread
+- [x] A single batched Distance Matrix call (Week 9's `DistanceMatrixTool`,
+      covering the hotel + every attraction that could be scheduled) backs
+      every travel-time lookup used during assignment/balancing/ordering —
+      found and fixed a real performance issue during live testing: an
+      earlier version called the single-pair `TravelTimeEstimator` repeatedly
+      during balancing/ordering, which on a cold cache meant dozens of
+      redundant network round-trips
+- [x] Performance: the optimizer's own computation (clustering, backtracking,
+      route ordering, balancing) completes in single-digit milliseconds for a
+      7-day/20-attraction trip, verified with fixed test doubles (no network
+      involved) — comfortably inside the plan's <5s target. End-to-end wall
+      time against real APIs is dominated by `ItineraryBuilder`'s per-item
+      restaurant-transition Distance Matrix lookups (an existing Week 5
+      characteristic, not part of Week 11's algorithm) and drops to
+      milliseconds on a warm cache
+- [x] Wired in as the LangGraph's default `build_itinerary` tool (same
+      `.build()` signature as `ItineraryBuilder`, so it's a drop-in default;
+      pass an explicit `ItineraryBuilder()` to opt out)
+- [x] Live-tested via `scripts/multi_day_optimizer_benchmark.py` — 10 real
+      trip scenarios across 5 cities, varying trip length/budget tier/must-see
+      attractions: 100% must-see coverage across scenarios that specified one,
+      46% average budget adherence (mock hotel pricing from Booking.com's
+      exhausted RapidAPI quota skews this — see Week 2's known issue), 11
+      minutes average day-to-day travel spread
+- [x] 23 new tests: 19 for `MultiDayOptimizer` (must-see priority sorting,
+      backtracking budget constraint satisfaction and graceful degradation,
+      cross-day balancing, route ordering, batched-matrix call-count
+      invariant, edge cases, and a performance regression test) plus 4 direct
+      tests of the new `ItineraryBuilder.build_day()` entry point
+
 ## Setup
 
 ```bash

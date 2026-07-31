@@ -37,6 +37,7 @@ from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
+from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
@@ -88,7 +89,7 @@ def build_planning_graph(
     attraction_tool: AttractionFinderTool | None = None,
     restaurant_tool: RestaurantFinderTool | None = None,
     weather_tool: WeatherCheckerTool | None = None,
-    itinerary_builder: ItineraryBuilder | None = None,
+    itinerary_builder: ItineraryBuilder | MultiDayOptimizer | None = None,
     conflict_detector: ConflictDetector | None = None,
     conflict_resolver: ConflictResolver | None = None,
     budget_optimizer: BudgetOptimizer | None = None,
@@ -101,7 +102,11 @@ def build_planning_graph(
     attraction_tool = attraction_tool or AttractionFinderTool()
     restaurant_tool = restaurant_tool or RestaurantFinderTool()
     weather_tool = weather_tool or WeatherCheckerTool()
-    itinerary_builder = itinerary_builder or ItineraryBuilder()
+    # MultiDayOptimizer (Week 11) wraps ItineraryBuilder (Week 5/7) with
+    # clustering/priority/budget-aware day-assignment, route-optimized visit
+    # order, and cross-day balancing — same `.build()` signature, so it's a
+    # drop-in default. Pass an explicit ItineraryBuilder() to opt out.
+    itinerary_builder = itinerary_builder or MultiDayOptimizer()
     conflict_detector = conflict_detector or ConflictDetector()
     conflict_resolver = conflict_resolver or ConflictResolver()
     budget_optimizer = budget_optimizer or BudgetOptimizer()
