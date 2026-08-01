@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test serve
 
 install:
 	poetry install
@@ -48,3 +48,6 @@ map-test:
 
 pdf-test:
 	poetry run python scripts/pdf_generation_test.py
+
+serve:
+	poetry run uvicorn travel_agent.api.app:create_app --factory --reload

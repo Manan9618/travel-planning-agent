@@ -18,6 +18,11 @@ class Settings:
 
     unsplash_access_key: str = os.getenv("UNSPLASH_ACCESS_KEY", "")
 
+    # Week 15 FastAPI backend. Empty (default) disables API-key enforcement
+    # entirely -- convenient for local dev, matching every other optional
+    # credential in this file (e.g. UNSPLASH_ACCESS_KEY).
+    api_key: str = os.getenv("API_KEY", "")
+
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     database_url: str = os.getenv("DATABASE_URL", "")
 
