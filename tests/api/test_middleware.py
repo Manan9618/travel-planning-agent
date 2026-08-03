@@ -81,3 +81,28 @@ def test_get_plan_polling_is_not_rate_limited(client):
     session_id = client.post("/plan", json={"raw_text": "trip"}).json()["session_id"]
     statuses = [client.get(f"/plan/{session_id}").status_code for _ in range(20)]
     assert all(s == 200 for s in statuses)
+
+
+# --- CORS (Week 16 frontend) ------------------------------------------------
+
+
+def test_allowed_origin_gets_cors_header(client):
+    resp = client.options(
+        "/plan",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_disallowed_origin_gets_no_cors_header(client):
+    resp = client.options(
+        "/plan",
+        headers={
+            "Origin": "http://evil.example.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert "access-control-allow-origin" not in resp.headers

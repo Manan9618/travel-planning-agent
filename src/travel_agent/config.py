@@ -23,6 +23,16 @@ class Settings:
     # credential in this file (e.g. UNSPLASH_ACCESS_KEY).
     api_key: str = os.getenv("API_KEY", "")
 
+    # Week 16 React frontend runs on a different origin (Vite dev server,
+    # default port 5173) than the API (default port 8000), so the browser
+    # needs an explicit CORS allowlist. Comma-separated; defaults to the two
+    # ports Vite/CRA-style dev servers commonly use.
+    cors_origins: list[str] = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+        if o.strip()
+    ]
+
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     database_url: str = os.getenv("DATABASE_URL", "")
 

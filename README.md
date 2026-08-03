@@ -451,12 +451,78 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       HTTP/WebSocket traffic, showed no such issue under repeated exercise.
       Documented in `tests/api/conftest.py` for whoever picks this up next
 
+**Phase 4, Week 16 — React Chat UI** — done
+
+- [x] React 18 + TypeScript + Vite + Tailwind CSS 4 frontend (`frontend/`),
+      talking to Week 15's FastAPI backend over both REST and the `/ws`
+      WebSocket — no server-side changes needed except adding `CORSMiddleware`
+      (a new browser origin the backend didn't need to handle before)
+- [x] Streaming chat UI: user/assistant message bubbles, a live step-progress
+      checklist (all 11 planning steps, ticked off in real time as
+      `step_completed` WS events arrive, with the current step pulsing) as
+      the "agent thinking" visualization the plan calls for, and a
+      three-dot typing indicator while waiting for the first narration token
+- [x] Real token-by-token narration rendering: Week 15's `narration_token`
+      WS events are folded into one growing string and streamed into an
+      assistant bubble as they arrive, not rendered only once complete
+- [x] `ItineraryCard`: expandable per-day accordion (time/title/type/cost per
+      item, free-day messaging, weather warnings), plus a live **Leaflet.js**
+      map (`react-leaflet`) driven directly by the itinerary's own lat/lng
+      data — day-colored markers and route polylines using the exact same
+      palette as Weeks 13/14's `day_color()`, so the live preview, the
+      exported Folium map, and the PDF's day badges all agree — and a budget
+      table (Week 8's `BudgetEvaluation`, color-coded by status)
+- [x] PDF download and "full interactive map" buttons both `fetch()` the
+      authenticated `/export` endpoints and hand the browser a `blob:` URL,
+      rather than linking straight to the API URL — a plain `<a href>` or
+      `<iframe src>` can't attach the `X-API-Key` header those endpoints
+      require once one is configured
+- [x] Refinement chips (`Less walking`, `Upgrade the hotel`, `Add a museum`,
+      ...) and free-text refinement both call `POST /refine`, switching the
+      whole input into "refine this trip" mode once an itinerary exists;
+      "New trip" resets back to planning from scratch
+- [x] Human-in-the-loop UI for Week 6's conflict-review pause: shows the
+      unresolved conflicts with Approve/Reject buttons, calling
+      `POST /plan/{id}/resume` — reconnecting the WebSocket afterward needed
+      an explicit `epoch` counter in the reconnect hook, since Week 15's
+      backend closes the socket on `awaiting_review` and reusing the same
+      `session_id` for `resume()` doesn't change React's dependency array,
+      so nothing would otherwise trigger a fresh connection
+- [x] Mobile-responsive (verified at a 390px viewport, not just assumed),
+      dark mode (class-based, system-preference default, persisted, toggle
+      in the header), and keyboard shortcuts (Enter to send/Shift+Enter for
+      a newline, Ctrl/Cmd+K to focus the input from anywhere)
+- [x] 33 new frontend tests (Vitest + Testing Library — the project's
+      existing dependency-injection/test-double conventions carried over
+      into components: `ChatInput` keyboard behavior, `StepProgress`
+      completed/current-step logic, `RefinementChips`, `HumanReviewPrompt`,
+      `ItineraryCard` day-expand/budget rendering, `dayColor` palette
+      cycling), plus 2 new backend CORS tests; 503 backend tests + 33
+      frontend tests passing
+- [x] Live-tested end-to-end in a real headless browser (not just unit
+      tests): typed a real trip request into the running app against the
+      real `uvicorn` server, watched the step checklist complete live,
+      real GPT-4o narration stream in, a real itinerary card render with a
+      working Leaflet map and budget table, confirmed dark mode and the
+      mobile layout, and confirmed **zero console errors and zero failed
+      network requests** throughout
+
 ## Setup
 
 ```bash
-cp .env.example .env   # fill in your API keys
+cp .env.example .env                     # fill in your API keys
 make install
 make test
+
+cp frontend/.env.example frontend/.env   # defaults work for local dev as-is
+make frontend-install
+```
+
+Run the backend and frontend in two terminals:
+
+```bash
+make serve            # FastAPI on :8000
+make frontend-dev     # Vite dev server on :5173
 ```
 
 ## Project layout
@@ -467,15 +533,23 @@ src/travel_agent/
   models/core.py      # shared Pydantic domain models
   tools/               # one module per agent tool (PreferenceParser, FlightSearchTool, ...)
   agents/              # LangGraph agent/graph definitions (added Week 4+)
+  api/                 # FastAPI app, schemas, session store (added Week 15)
   utils/
 tests/
   unit/
   integration/
   e2e/
+  api/                 # FastAPI endpoint/websocket tests (added Week 15)
+frontend/               # React 18 + TypeScript + Vite chat UI (added Week 16)
+  src/
+    components/
+    lib/                # API client, WebSocket hook, theme hook
+    types/               # hand-written TS mirror of the API's Pydantic schemas
 ```
 
 ## Tech stack
 
 Python 3.11+ (pinned to 3.11.14 via `.python-version`), LangGraph + LangChain, OpenAI GPT-4o,
-FastAPI + uvicorn + WebSockets, slowapi, React (added later phases), PostgreSQL + Redis, Docker,
-pytest, Folium, Playwright, WeasyPrint, qrcode.
+FastAPI + uvicorn + WebSockets, slowapi, PostgreSQL + Redis, Docker, pytest, Folium, Playwright,
+WeasyPrint, qrcode. React 18 + TypeScript + Vite + Tailwind CSS 4 + react-leaflet, Vitest +
+Testing Library.

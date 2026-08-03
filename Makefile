@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test serve
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test serve frontend-install frontend-dev frontend-build frontend-test frontend-lint
 
 install:
 	poetry install
@@ -51,3 +51,18 @@ pdf-test:
 
 serve:
 	poetry run uvicorn travel_agent.api.app:create_app --factory --reload
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
+
+frontend-test:
+	cd frontend && npm test
+
+frontend-lint:
+	cd frontend && npm run lint

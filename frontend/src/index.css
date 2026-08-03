@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+@import 'leaflet/dist/leaflet.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Leaflet's default marker icon paths assume its own bundling; MapPreview.tsx
+   sets icons explicitly per-marker instead, so no icon override is needed here. */

@@ -47,6 +47,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
@@ -96,6 +97,13 @@ def create_app(
     limiter = Limiter(key_func=get_remote_address)
     app = FastAPI(title="Autonomous AI Travel Planning Agent", version="0.1.0")
     app.state.limiter = limiter
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.session_store = (
         session_store  # exposed for tests to drain background work on teardown
     )
