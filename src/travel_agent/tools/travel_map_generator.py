@@ -1,14 +1,21 @@
 """TravelMapGenerator — Week 13 deliverable.
 
-Renders a built Itinerary as an interactive Folium/Leaflet map: a hotel pin,
-one pin per scheduled attraction/restaurant/hotel check-in/out — color-coded
-by day (Day 1 = blue, Day 2 = green, ... cycling through `DAY_COLORS`) with a
-popup info card — a polyline per day connecting that day's stops in
-chronological order, marker clustering (so the map stays readable zoomed out),
-and a day-by-day reveal animation via Folium's `TimestampedGeoJson` plugin (a
-real Leaflet timeline control — every day's route feature shares one
-timestamp, so advancing the slider reveals a full day's route at once and
-earlier days stay visible, rather than animating point-by-point).
+Renders a built Itinerary as an interactive Folium/Leaflet map: a hotel
+marker, one marker per scheduled attraction/restaurant/hotel check-in/out —
+color-coded by day along a sequential blue-to-amber ramp (`DAY_COLORS`, Day 1
+= blue through the trip's final day = amber) with a popup info card — a
+polyline per day connecting that day's stops in chronological order, marker
+clustering (so the map stays readable zoomed out), and a day-by-day reveal
+animation via Folium's `TimestampedGeoJson` plugin (a real Leaflet timeline
+control — every day's route feature shares one timestamp, so advancing the
+slider reveals a full day's route at once and earlier days stay visible,
+rather than animating point-by-point).
+
+Markers use `CircleMarker` (a plain colored dot) rather than `Marker` +
+`Icon`: Folium's `Icon` only accepts a small fixed set of named colors (no
+arbitrary hex), which can't represent a smooth ramp — `CircleMarker` takes
+any hex color and is also what the Week 16 React frontend's live map preview
+already uses, so a day's color reads identically across both.
 
 `render_thumbnail_png()` rasterizes a saved map HTML file via a headless
 Chromium (Playwright) — needed because Week 14's PDF renderer can't embed
@@ -24,29 +31,25 @@ from folium.plugins import MarkerCluster, TimestampedGeoJson
 
 from travel_agent.models.core import DayPlan, Itinerary, ItineraryItem
 
+# A sequential blue -> amber ramp (HSL hue 214 -> 36, s=58%, l=46%), so day
+# color reads as a natural progression through the trip rather than an
+# arbitrary categorical palette — matches the same ramp in the frontend's
+# dayColors.ts, kept in sync by hand (same cross-language duplication this
+# project already accepts for e.g. PlanningStep's string values).
 DAY_COLORS = [
-    "blue",
-    "green",
-    "red",
-    "purple",
-    "orange",
-    "darkred",
-    "cadetblue",
-    "darkgreen",
-    "pink",
-    "gray",
+    "#316cb9",
+    "#3199b9",
+    "#31b9ad",
+    "#31b980",
+    "#31b953",
+    "#3cb931",
+    "#69b931",
+    "#96b931",
+    "#b9b031",
+    "#b98331",
 ]
-HOTEL_MARKER_COLOR = "black"
+HOTEL_MARKER_COLOR = "#111827"
 DEFAULT_ZOOM = 13
-
-_ICON_BY_ACTIVITY = {
-    "attraction": "camera",
-    "restaurant": "cutlery",
-    "hotel_checkin": "bed",
-    "hotel_checkout": "bed",
-    "flight": "plane",
-    "transfer": "car",
-}
 
 
 def day_color(day_number: int) -> str:
@@ -98,10 +101,15 @@ class TravelMapGenerator:
     @staticmethod
     def _add_hotel_marker(itinerary: Itinerary, cluster: MarkerCluster) -> None:
         hotel = itinerary.hotel
-        folium.Marker(
+        folium.CircleMarker(
             location=(hotel.lat, hotel.lng),
+            radius=9,
             popup=folium.Popup(f"<b>{hotel.name}</b><br>{hotel.address}", max_width=250),
-            icon=folium.Icon(color=HOTEL_MARKER_COLOR, icon="home", prefix="fa"),
+            color="#ffffff",
+            weight=2,
+            fill=True,
+            fill_color=HOTEL_MARKER_COLOR,
+            fill_opacity=1,
         ).add_to(cluster)
 
     def _add_day_markers(self, day: DayPlan, cluster: MarkerCluster) -> None:
@@ -109,14 +117,15 @@ class TravelMapGenerator:
         for item in day.items:
             if item.lat is None or item.lng is None:
                 continue
-            folium.Marker(
+            folium.CircleMarker(
                 location=(item.lat, item.lng),
+                radius=7,
                 popup=folium.Popup(self._popup_html(day, item), max_width=250),
-                icon=folium.Icon(
-                    color=color,
-                    icon=_ICON_BY_ACTIVITY.get(item.activity_type, "info-sign"),
-                    prefix="fa",
-                ),
+                color=color,
+                weight=2,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.85,
             ).add_to(cluster)
 
     @staticmethod

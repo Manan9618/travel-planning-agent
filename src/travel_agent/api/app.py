@@ -124,6 +124,7 @@ def create_app(
             errors=values.get("errors", []),
             preferences=values.get("preferences"),
             itinerary=values.get("itinerary"),
+            conflict_log=values.get("conflict_log", []),
             unresolved_conflicts=values.get("unresolved_conflicts", []),
             budget_evaluation=values.get("budget_evaluation"),
             pdf_path=values.get("pdf_path"),

@@ -41,6 +41,7 @@ def test_plan_runs_to_completion_and_produces_full_itinerary(client):
     assert data["budget_evaluation"] is not None
     assert data["pdf_path"] is not None
     assert data["map_html_available"] is True
+    assert isinstance(data["conflict_log"], list)
     assert set(data["completed_steps"]) == {
         "parse_preferences",
         "search_flights",
@@ -103,3 +104,6 @@ def test_unresolvable_budget_pauses_with_awaiting_review_status(app_factory):
     assert data["status"] == "awaiting_review"
     assert "human_review" not in data["completed_steps"]
     assert "generate_pdf" in data["completed_steps"]  # runs before human_review
+    # ConflictResolver logs every attempt, successful or not (Week 6), so an
+    # unresolvable budget overrun still leaves a trail of what it tried.
+    assert len(data["conflict_log"]) > 0

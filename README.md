@@ -465,14 +465,7 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
 - [x] Real token-by-token narration rendering: Week 15's `narration_token`
       WS events are folded into one growing string and streamed into an
       assistant bubble as they arrive, not rendered only once complete
-- [x] `ItineraryCard`: expandable per-day accordion (time/title/type/cost per
-      item, free-day messaging, weather warnings), plus a live **Leaflet.js**
-      map (`react-leaflet`) driven directly by the itinerary's own lat/lng
-      data — day-colored markers and route polylines using the exact same
-      palette as Weeks 13/14's `day_color()`, so the live preview, the
-      exported Folium map, and the PDF's day badges all agree — and a budget
-      table (Week 8's `BudgetEvaluation`, color-coded by status)
-- [x] PDF download and "full interactive map" buttons both `fetch()` the
+- [x] PDF download and "full interactive map" buttons `fetch()` the
       authenticated `/export` endpoints and hand the browser a `blob:` URL,
       rather than linking straight to the API URL — a plain `<a href>` or
       `<iframe src>` can't attach the `X-API-Key` header those endpoints
@@ -488,24 +481,70 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       backend closes the socket on `awaiting_review` and reusing the same
       `session_id` for `resume()` doesn't change React's dependency array,
       so nothing would otherwise trigger a fresh connection
-- [x] Mobile-responsive (verified at a 390px viewport, not just assumed),
-      dark mode (class-based, system-preference default, persisted, toggle
-      in the header), and keyboard shortcuts (Enter to send/Shift+Enter for
-      a newline, Ctrl/Cmd+K to focus the input from anywhere)
-- [x] 33 new frontend tests (Vitest + Testing Library — the project's
-      existing dependency-injection/test-double conventions carried over
-      into components: `ChatInput` keyboard behavior, `StepProgress`
-      completed/current-step logic, `RefinementChips`, `HumanReviewPrompt`,
-      `ItineraryCard` day-expand/budget rendering, `dayColor` palette
-      cycling), plus 2 new backend CORS tests; 503 backend tests + 33
-      frontend tests passing
-- [x] Live-tested end-to-end in a real headless browser (not just unit
-      tests): typed a real trip request into the running app against the
-      real `uvicorn` server, watched the step checklist complete live,
-      real GPT-4o narration stream in, a real itinerary card render with a
-      working Leaflet map and budget table, confirmed dark mode and the
-      mobile layout, and confirmed **zero console errors and zero failed
-      network requests** throughout
+- [x] Mobile-responsive (verified at a 390px viewport, not just assumed) —
+      the chat and the itinerary canvas are two full panes side by side on
+      desktop, and a bottom Chat/Itinerary toggle switches between them on
+      narrow screens rather than stacking both into one long scroll — dark
+      mode (class-based, system-preference default, persisted, toggle in
+      the header), and keyboard shortcuts (Enter to send/Shift+Enter for a
+      newline, Ctrl/Cmd+K to focus the input from anywhere)
+
+**Visual design pass** (same week, after reviewing reference mockups): rebuilt
+the UI around a tabbed-canvas layout — a fixed chat rail plus a right-hand
+canvas with **Itinerary / Map / Budget / PDF preview** tabs — replacing the
+original single-column chat-with-inline-itinerary-card design.
+
+- [x] Warm paper background + near-black ink + a single green accent
+      reserved for actions (day-to-day color-coding lives entirely in the
+      day ramp below, not in UI chrome) — `Instrument Sans` for prose,
+      `IBM Plex Mono` for anything measured (times, costs, stats), both
+      self-hosted via `@fontsource` rather than a runtime Google Fonts
+      dependency
+- [x] Day color changed from a 10-color categorical palette to a sequential
+      **blue → amber ramp** (HSL-interpolated, 10 stops) so a trip's color
+      progression reads naturally day-to-day. Changed in both places that
+      define it — `travel_map_generator.py`'s `DAY_COLORS` (backend: Folium
+      map + PDF day badges) and `dayColors.ts` (frontend: live map preview)
+      — kept hand-in-sync exactly as before, so the live map, the exported
+      Folium map, and the PDF still all agree on what color means "Day N"
+- [x] Found in the process and fixed for real: Folium's `Icon` marker only
+      accepts a small fixed set of named colors, not arbitrary hex, so it
+      can't represent a smooth ramp. Switched the backend map's markers from
+      `Marker` + `Icon` (pins) to `CircleMarker` (dots) — which does accept
+      any hex color and is what the React frontend's live map already used,
+      so both now render identically, not just approximately
+- [x] New `ItineraryPanel`/`DayCard` components: a real weather banner
+      (surfaces the first day with an actual Week 7 weather warning, not an
+      invented summary), day cards with the day's real cost/stop count, and
+      genuine walking-distance/time estimates between consecutive stops
+      (haversine great-circle distance, honestly labeled as an estimate —
+      the backend's real driving/transit routing isn't re-exposed client
+      side). Weather conditions shown as terse METAR-style codes (CLR, OVC,
+      RAIN) condensed from OpenWeatherMap's real `condition` field
+- [x] New `RunSummary` badges replace an earlier draft's "N tool calls"-style
+      framing with only numbers the app actually has: day count, budget
+      adherence, conflicts resolved, must-see coverage. Conflicts-resolved
+      needed one new backend field — `conflict_log` added to
+      `SessionStateResponse`, exposing Week 6's existing `ResolutionLogEntry`
+      trail (previously computed but never sent over the API)
+- [x] New `PdfPreview` tab: fetches the same authenticated PDF blob the
+      download button uses and renders it in an `<iframe>` — browsers render
+      PDFs natively, so this needed no new PDF-to-image pipeline
+- [x] 64 frontend tests total (up from 33 — new tests for `Header`, `Tabs`,
+      `DayCard`, `WeatherBanner`, `BudgetPanel`, `RunSummary`, `PdfPreview`,
+      plus `geo.ts`/`weatherCode.ts` utilities; `ItineraryCard`'s old tests
+      were retired along with the component itself), plus 2 new backend CORS
+      tests and 2 new `conflict_log` assertions on existing endpoint tests;
+      503 backend tests + 64 frontend tests passing
+- [x] Live-tested end-to-end in a real headless browser against the real
+      running `uvicorn` server, twice — once for the original layout, again
+      after the visual redesign: typed a real trip request, watched the step
+      checklist complete live, real GPT-4o narration stream in, a real
+      itinerary render across all four tabs (day cards with real walking
+      estimates, a working Leaflet map, a real budget table, and the actual
+      generated PDF rendering inline), confirmed dark mode and the mobile
+      chat/canvas toggle at a 390px viewport, and confirmed **zero console
+      errors and zero failed network requests** throughout both passes
 
 ## Setup
 

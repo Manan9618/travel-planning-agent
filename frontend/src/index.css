@@ -1,7 +1,44 @@
 @import 'tailwindcss';
 @import 'leaflet/dist/leaflet.css';
 
+@import '@fontsource/instrument-sans/400.css';
+@import '@fontsource/instrument-sans/500.css';
+@import '@fontsource/instrument-sans/600.css';
+@import '@fontsource/instrument-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens (Tailwind v4 @theme — these become real utilities:
+   bg-paper, text-ink, border-line, font-sans, font-mono, etc.). Warm paper
+   background + near-black ink + one green accent reserved for actions,
+   mirroring the reference design's restraint (a single accent color, not a
+   rainbow of UI chrome) — day-to-day color-coding lives entirely in the
+   DAY_COLORS ramp (dayColors.ts), not in the UI chrome itself. */
+@theme {
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --color-paper: #f1efe7;
+  --color-surface: #faf9f5;
+  --color-ink: #18160f;
+  --color-ink-muted: #756f5e;
+  --color-ink-faint: #a49d89;
+  --color-line: #ddd7c6;
+  --color-accent: #1f6b3a;
+  --color-accent-soft: #e3ecdf;
+
+  --color-paper-dark: #16150f;
+  --color-surface-dark: #1f1d15;
+  --color-ink-dark: #ece7d8;
+  --color-ink-muted-dark: #a39c87;
+  --color-ink-faint-dark: #6f6a58;
+  --color-line-dark: #33301f;
+  --color-accent-dark: #4ade80;
+  --color-accent-soft-dark: #1c3324;
+}
 
 html,
 body,
@@ -15,3 +52,9 @@ body {
 
 /* Leaflet's default marker icon paths assume its own bundling; MapPreview.tsx
    sets icons explicitly per-marker instead, so no icon override is needed here. */
+
+/* Tabular numerals everywhere numbers are compared in a column (budget
+   tables, day stats) so digits don't jiggle the layout as they change. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

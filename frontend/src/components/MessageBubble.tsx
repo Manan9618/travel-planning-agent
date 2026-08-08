@@ -10,12 +10,12 @@ export function MessageBubble({ role, children, tone = 'default' }: Props) {
     <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={[
-          'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap sm:max-w-[70%]',
+          'max-w-[90%] rounded-xl px-3.5 py-2.5 text-sm whitespace-pre-wrap',
           isUser
-            ? 'rounded-br-sm bg-indigo-600 text-white'
+            ? 'rounded-br-sm bg-ink text-paper dark:bg-ink-dark dark:text-paper-dark'
             : tone === 'error'
-              ? 'rounded-bl-sm bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
-              : 'rounded-bl-sm bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100',
+              ? 'rounded-bl-sm border border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300'
+              : 'rounded-bl-sm border border-line bg-paper text-ink dark:border-line-dark dark:bg-paper-dark dark:text-ink-dark',
         ].join(' ')}
       >
         {children}

@@ -146,6 +146,13 @@ export interface Conflict {
   auto_resolvable: boolean
 }
 
+export interface ResolutionLogEntry {
+  day_number: number
+  conflict_type: string
+  action: string
+  resolved: boolean
+}
+
 // --- HTTP request/response bodies -------------------------------------------
 
 export interface PlanRequest {
@@ -175,6 +182,7 @@ export interface SessionStateResponse {
   errors: string[]
   preferences: TravelPreferences | null
   itinerary: Itinerary | null
+  conflict_log: ResolutionLogEntry[]
   unresolved_conflicts: Conflict[]
   budget_evaluation: BudgetEvaluation | null
   pdf_path: string | null

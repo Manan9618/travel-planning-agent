@@ -6,6 +6,7 @@ import { dayColor } from '@/lib/dayColors'
 
 interface Props {
   itinerary: Itinerary
+  className?: string
 }
 
 interface Stop {
@@ -56,7 +57,7 @@ function FitBounds({ points }: { points: LatLngTuple[] }) {
  * separately-exported Folium HTML, so it stays reactively in sync with
  * whatever itinerary is currently shown in the chat.
  */
-export function MapPreview({ itinerary }: Props) {
+export function MapPreview({ itinerary, className }: Props) {
   const stops = collectStops(itinerary)
   const hotel: HotelOption | null = itinerary.hotel
 
@@ -67,7 +68,12 @@ export function MapPreview({ itinerary }: Props) {
 
   if (allPoints.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+      <div
+        className={
+          className ??
+          'flex h-64 items-center justify-center border border-line bg-paper text-sm text-ink-muted dark:border-line-dark dark:bg-paper-dark dark:text-ink-muted-dark'
+        }
+      >
         No mappable stops yet
       </div>
     )
@@ -81,10 +87,7 @@ export function MapPreview({ itinerary }: Props) {
   }
 
   return (
-    <div
-      className="h-64 w-full overflow-hidden rounded-lg border border-gray-200 sm:h-80 dark:border-gray-700"
-      data-testid="map-preview"
-    >
+    <div className={className ?? 'h-64 w-full overflow-hidden sm:h-80'} data-testid="map-preview">
       <MapContainer center={allPoints[0]} zoom={13} className="h-full w-full">
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

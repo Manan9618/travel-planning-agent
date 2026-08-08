@@ -17,14 +17,14 @@ interface Props {
  * handles free-text refinement requests like these. */
 export function RefinementChips({ onSelect, disabled }: Props) {
   return (
-    <div className="flex flex-wrap gap-2 px-1">
+    <div className="flex flex-wrap gap-1.5 px-1">
       {COMMON_REFINEMENTS.map((label) => (
         <button
           key={label}
           type="button"
           disabled={disabled}
           onClick={() => onSelect(label)}
-          className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+          className="rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[11px] text-ink-muted hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 dark:border-line-dark dark:bg-paper-dark dark:text-ink-muted-dark dark:hover:border-accent-dark dark:hover:text-accent-dark"
         >
           {label}
         </button>

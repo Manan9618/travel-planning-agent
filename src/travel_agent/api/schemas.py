@@ -36,6 +36,7 @@ class SessionStateResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
     preferences: dict[str, Any] | None = None
     itinerary: dict[str, Any] | None = None
+    conflict_log: list[dict[str, Any]] = Field(default_factory=list)
     unresolved_conflicts: list[dict[str, Any]] = Field(default_factory=list)
     budget_evaluation: dict[str, Any] | None = None
     pdf_path: str | None = None

@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { downloadPdf, openInteractiveMap, refinePlan, resumePlan, startPlan, getPlan } from '@/lib/api'
+import { downloadPdf, getPlan, refinePlan, resumePlan, startPlan } from '@/lib/api'
 import { usePlanningProgress } from '@/lib/useWebSocket'
 import type { SessionStateResponse } from '@/types/api'
+import { Header } from '@/components/Header'
 import { MessageBubble } from '@/components/MessageBubble'
 import { ChatInput } from '@/components/ChatInput'
 import { StepProgress, TypingIndicator } from '@/components/StepProgress'
-import { ItineraryCard } from '@/components/ItineraryCard'
+import { RunSummary } from '@/components/RunSummary'
 import { RefinementChips } from '@/components/RefinementChips'
 import { HumanReviewPrompt } from '@/components/HumanReviewPrompt'
-import { ThemeToggle } from '@/components/ThemeToggle'
+import { Tabs } from '@/components/Tabs'
+import { ItineraryPanel } from '@/components/ItineraryPanel'
+import { BudgetPanel } from '@/components/BudgetPanel'
+import { MapPreview } from '@/components/MapPreview'
+import { PdfPreview } from '@/components/PdfPreview'
 
 interface Turn {
   sessionId: string
@@ -23,17 +28,20 @@ function App() {
   const [epoch, setEpoch] = useState(0)
   const [deciding, setDeciding] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState('itinerary')
+  const [mobileView, setMobileView] = useState<'chat' | 'canvas'>('chat')
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
 
   const progress = usePlanningProgress(liveSessionId, epoch)
   const lastTurn = turns[turns.length - 1] ?? null
 
-  // Once the live run reaches a terminal WS state (done / awaiting_review /
-  // error — Week 15's TERMINAL_EVENT_TYPES, which close the socket), fetch
-  // the full session state once via REST (the WS only streams progress
-  // events, not the itinerary/budget/PDF payload itself) and fold it into
-  // that turn.
+  // The canvas shows the most recent turn that actually produced an
+  // itinerary — while a refinement is still streaming (or paused awaiting
+  // review), the previous itinerary stays visible instead of the canvas
+  // going blank.
+  const displayState = [...turns].reverse().find((t) => t.final?.itinerary)?.final ?? null
+
   useEffect(() => {
     if (!liveSessionId) return
     if (!(progress.done || progress.awaitingReview || progress.errorMessage)) return
@@ -60,7 +68,6 @@ function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [turns, progress.narration, progress.completedSteps])
 
-  // Keyboard shortcuts: Ctrl/Cmd+K focuses the input from anywhere.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -79,12 +86,14 @@ function App() {
   async function handleSend(text: string) {
     setSendError(null)
     try {
-      const res = isRefining
-        ? await refinePlan(lastTurn!.sessionId, text)
-        : await startPlan(text)
-      setTurns((prev) => [...prev, { sessionId: res.session_id, userText: text, final: null, narration: '' }])
+      const res = isRefining ? await refinePlan(lastTurn!.sessionId, text) : await startPlan(text)
+      setTurns((prev) => [
+        ...prev,
+        { sessionId: res.session_id, userText: text, final: null, narration: '' },
+      ])
       setLiveSessionId(res.session_id)
       setEpoch((e) => e + 1)
+      setMobileView('chat')
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err))
     }
@@ -112,126 +121,176 @@ function App() {
     }
   }
 
-  async function handleOpenMap(sessionId: string) {
-    try {
-      await openInteractiveMap(sessionId)
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
   function startNewTrip() {
     setTurns([])
     setSendError(null)
+    setMobileView('chat')
     inputRef.current?.focus()
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col bg-white dark:bg-gray-950">
-      <header className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-800">
-        <div>
-          <h1 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            AI Travel Planning Agent
-          </h1>
-          <p className="text-xs text-gray-400">Describe a trip and I'll plan it end to end</p>
-        </div>
-        <div className="flex items-center gap-1">
-          {turns.length > 0 && (
-            <button
-              type="button"
-              onClick={startNewTrip}
-              className="rounded-md px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-            >
-              New trip
-            </button>
-          )}
-          <ThemeToggle />
-        </div>
-      </header>
+    <div className="flex h-full flex-col bg-paper font-sans dark:bg-paper-dark">
+      <Header
+        itinerary={displayState?.itinerary ?? null}
+        onNewTrip={startNewTrip}
+        onDownloadPdf={() => displayState && handleDownloadPdf(displayState.session_id)}
+        pdfAvailable={Boolean(displayState?.pdf_path)}
+        hasTurns={turns.length > 0}
+      />
 
-      <main className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        {turns.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-gray-400">
-            <p className="text-sm">
-              Try: <i>"5 days in Paris this September under $2000, I love art and museums"</i>
-            </p>
-          </div>
-        )}
+      <div className="flex min-h-0 flex-1">
+        {/* Chat rail */}
+        <div
+          className={[
+            'flex-col sm:flex sm:w-[380px] sm:shrink-0 sm:border-r sm:border-line md:w-[420px] dark:sm:border-line-dark',
+            mobileView === 'canvas' ? 'hidden' : 'flex',
+            'w-full',
+          ].join(' ')}
+        >
+          <main className="flex-1 space-y-3 overflow-y-auto p-3">
+            {turns.length === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+                <p className="text-sm text-ink-muted dark:text-ink-muted-dark">
+                  Try: <i>&ldquo;5 days in Paris this September under $2000, I love art and museums&rdquo;</i>
+                </p>
+              </div>
+            )}
 
-        {turns.map((turn) => {
-          const isLive = liveSessionId === turn.sessionId
-          return (
-            <div key={turn.sessionId} className="space-y-3">
-              <MessageBubble role="user">{turn.userText}</MessageBubble>
+            {turns.map((turn) => {
+              const isLive = liveSessionId === turn.sessionId
+              return (
+                <div key={turn.sessionId} className="space-y-2">
+                  <MessageBubble role="user">{turn.userText}</MessageBubble>
 
-              {isLive && (
-                <div className="flex flex-col items-start gap-2">
-                  <StepProgress completedSteps={progress.completedSteps} done={progress.done} />
-                  {progress.narration ? (
-                    <MessageBubble role="assistant">{progress.narration}</MessageBubble>
-                  ) : (
-                    <TypingIndicator />
+                  {isLive && (
+                    <div className="flex flex-col items-start gap-2">
+                      <StepProgress completedSteps={progress.completedSteps} done={progress.done} />
+                      {progress.narration ? (
+                        <MessageBubble role="assistant">{progress.narration}</MessageBubble>
+                      ) : (
+                        <TypingIndicator />
+                      )}
+                    </div>
+                  )}
+
+                  {!isLive && turn.final?.status === 'awaiting_review' && (
+                    <HumanReviewPrompt
+                      conflicts={turn.final.unresolved_conflicts}
+                      onDecide={handleDecision}
+                      deciding={deciding}
+                    />
+                  )}
+
+                  {!isLive && turn.narration && (
+                    <MessageBubble role="assistant">{turn.narration}</MessageBubble>
+                  )}
+
+                  {!isLive && turn.final?.itinerary && (
+                    <div className="space-y-2">
+                      <RunSummary state={turn.final} />
+                      <button
+                        type="button"
+                        onClick={() => setMobileView('canvas')}
+                        className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-ink-muted hover:text-ink sm:hidden dark:border-line-dark dark:text-ink-muted-dark dark:hover:text-ink-dark"
+                      >
+                        View itinerary →
+                      </button>
+                    </div>
+                  )}
+
+                  {!isLive && turn.final && turn.final.status === 'failed' && (
+                    <MessageBubble role="assistant" tone="error">
+                      Something went wrong: {turn.final.errors.join('; ') || 'unknown error'}
+                    </MessageBubble>
                   )}
                 </div>
-              )}
+              )
+            })}
 
-              {!isLive && turn.final?.status === 'awaiting_review' && (
-                <HumanReviewPrompt
-                  conflicts={turn.final.unresolved_conflicts}
-                  onDecide={handleDecision}
-                  deciding={deciding}
-                />
-              )}
+            {sendError && (
+              <MessageBubble role="assistant" tone="error">
+                {sendError}
+              </MessageBubble>
+            )}
 
-              {!isLive && turn.narration && <MessageBubble role="assistant">{turn.narration}</MessageBubble>}
+            <div ref={bottomRef} />
+          </main>
 
-              {!isLive && turn.final?.itinerary && (
-                <ItineraryCard
-                  itinerary={turn.final.itinerary}
-                  budgetEvaluation={turn.final.budget_evaluation}
-                  pdfAvailable={Boolean(turn.final.pdf_path)}
-                  mapAvailable={turn.final.map_html_available}
-                  onDownloadPdf={() => handleDownloadPdf(turn.sessionId)}
-                  onOpenMap={() => handleOpenMap(turn.sessionId)}
-                />
-              )}
-
-              {!isLive && turn.final && turn.final.status === 'failed' && (
-                <MessageBubble role="assistant" tone="error">
-                  Something went wrong: {turn.final.errors.join('; ') || 'unknown error'}
-                </MessageBubble>
-              )}
+          {isRefining && !isBusy && !isAwaitingReview && (
+            <div className="px-3 pb-2">
+              <RefinementChips onSelect={handleSend} disabled={isBusy} />
             </div>
-          )
-        })}
+          )}
 
-        {sendError && (
-          <MessageBubble role="assistant" tone="error">
-            {sendError}
-          </MessageBubble>
-        )}
+          <ChatInput
+            ref={inputRef}
+            onSend={handleSend}
+            disabled={isBusy || isAwaitingReview}
+            placeholder={
+              isAwaitingReview
+                ? 'Approve or reject above to continue…'
+                : isRefining
+                  ? 'Refine your trip…'
+                  : 'Describe your trip…'
+            }
+          />
+        </div>
 
-        <div ref={bottomRef} />
-      </main>
+        {/* Canvas */}
+        <div
+          className={['min-w-0 flex-1 sm:flex', mobileView === 'chat' ? 'hidden' : 'flex'].join(' ')}
+        >
+          {displayState?.itinerary ? (
+            <Tabs
+              tabs={[
+                { id: 'itinerary', label: 'Itinerary' },
+                { id: 'map', label: 'Map' },
+                { id: 'budget', label: 'Budget' },
+                { id: 'pdf', label: 'PDF preview', disabled: !displayState.pdf_path },
+              ]}
+              active={activeTab}
+              onChange={setActiveTab}
+            >
+              {activeTab === 'itinerary' && <ItineraryPanel itinerary={displayState.itinerary} />}
+              {activeTab === 'map' && (
+                <MapPreview itinerary={displayState.itinerary} className="h-full w-full" />
+              )}
+              {activeTab === 'budget' && (
+                <BudgetPanel
+                  itinerary={displayState.itinerary}
+                  evaluation={displayState.budget_evaluation}
+                />
+              )}
+              {activeTab === 'pdf' && (
+                <PdfPreview sessionId={displayState.session_id} available={Boolean(displayState.pdf_path)} />
+              )}
+            </Tabs>
+          ) : (
+            <div className="flex h-full w-full items-center justify-center p-8 text-center font-mono text-xs text-ink-faint dark:text-ink-faint-dark">
+              Your itinerary will appear here once it&apos;s built.
+            </div>
+          )}
+        </div>
+      </div>
 
-      {isRefining && !isBusy && !isAwaitingReview && (
-        <div className="px-4 pb-2">
-          <RefinementChips onSelect={handleSend} disabled={isBusy} />
+      {displayState?.itinerary && (
+        <div className="flex shrink-0 border-t border-line sm:hidden dark:border-line-dark">
+          <button
+            type="button"
+            onClick={() => setMobileView('chat')}
+            className={`flex-1 py-2 font-mono text-xs ${mobileView === 'chat' ? 'text-ink dark:text-ink-dark' : 'text-ink-faint dark:text-ink-faint-dark'}`}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileView('canvas')}
+            className={`flex-1 py-2 font-mono text-xs ${mobileView === 'canvas' ? 'text-ink dark:text-ink-dark' : 'text-ink-faint dark:text-ink-faint-dark'}`}
+          >
+            Itinerary
+          </button>
         </div>
       )}
-
-      <ChatInput
-        ref={inputRef}
-        onSend={handleSend}
-        disabled={isBusy || isAwaitingReview}
-        placeholder={
-          isAwaitingReview
-            ? 'Approve or reject above to continue…'
-            : isRefining
-              ? 'Refine your trip…'
-              : 'Describe your trip…'
-        }
-      />
     </div>
   )
 }

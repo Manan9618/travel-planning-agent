@@ -57,8 +57,16 @@ async function fetchBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(blob)
 }
 
+export function fetchPdfBlobUrl(sessionId: string): Promise<string> {
+  return fetchBlobUrl(`/export/${sessionId}/pdf`)
+}
+
+export function fetchMapBlobUrl(sessionId: string): Promise<string> {
+  return fetchBlobUrl(`/export/${sessionId}/map`)
+}
+
 export async function downloadPdf(sessionId: string): Promise<void> {
-  const url = await fetchBlobUrl(`/export/${sessionId}/pdf`)
+  const url = await fetchPdfBlobUrl(sessionId)
   const a = document.createElement('a')
   a.href = url
   a.download = `itinerary-${sessionId}.pdf`
@@ -67,7 +75,7 @@ export async function downloadPdf(sessionId: string): Promise<void> {
 }
 
 export async function openInteractiveMap(sessionId: string): Promise<void> {
-  const url = await fetchBlobUrl(`/export/${sessionId}/map`)
+  const url = await fetchMapBlobUrl(sessionId)
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
