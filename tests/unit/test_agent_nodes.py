@@ -5,6 +5,7 @@ from travel_agent.agents.nodes import (
     make_build_itinerary_node,
     make_check_conflicts_node,
     make_check_weather_node,
+    make_enrich_attractions_node,
     make_find_attractions_node,
     make_find_restaurants_node,
     make_generate_map_node,
@@ -17,14 +18,17 @@ from travel_agent.agents.nodes import (
 from travel_agent.models.core import (
     Attraction,
     Conflict,
+    DayPlan,
     FlightOption,
     HotelOption,
     Itinerary,
+    ItineraryItem,
     ResolutionLogEntry,
     Restaurant,
     TravelPreferences,
     WeatherForecast,
 )
+from travel_agent.tools.unsplash_photo import CoverPhoto
 
 BASE_PREFS = {
     "origin": "Boston",
@@ -331,6 +335,102 @@ def test_build_itinerary_node_builder_exception_records_error():
 def _minimal_itinerary_dict():
     prefs = TravelPreferences(destination="Paris", raw_text="test")
     return Itinerary(preferences=prefs, days=[]).model_dump(mode="json")
+
+
+def _itinerary_dict_with_items(items):
+    prefs = TravelPreferences(destination="Paris", raw_text="test")
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=items)
+    return Itinerary(preferences=prefs, days=[day]).model_dump(mode="json")
+
+
+def _attraction_item(title="Eiffel Tower"):
+    return ItineraryItem(
+        time_slot="morning",
+        start_time="2026-09-01T09:00:00",
+        end_time="2026-09-01T11:00:00",
+        activity_type="attraction",
+        title=title,
+    )
+
+
+# --- enrich_attractions -------------------------------------------------
+
+
+def test_enrich_attractions_node_sets_photo_and_description():
+    photo_tool = MagicMock()
+    photo_tool.get_photo.return_value = CoverPhoto(
+        url="https://images.unsplash.com/eiffel",
+        photographer_name="Jane",
+        photographer_url="https://x",
+    )
+    description_tool = MagicMock()
+    description_tool.describe.return_value = {"Eiffel Tower": "An iconic iron lattice tower."}
+
+    node = make_enrich_attractions_node(photo_tool, description_tool)
+    state = {"itinerary": _itinerary_dict_with_items([_attraction_item()])}
+    result = node(state)
+
+    item = result["itinerary"]["days"][0]["items"][0]
+    assert item["photo_url"] == "https://images.unsplash.com/eiffel"
+    assert item["description"] == "An iconic iron lattice tower."
+    assert result["completed_steps"] == ["enrich_attractions"]
+    assert result["errors"] == []
+
+
+def test_enrich_attractions_node_queries_title_and_destination():
+    photo_tool = MagicMock()
+    photo_tool.get_photo.return_value = None
+    description_tool = MagicMock()
+    description_tool.describe.return_value = {}
+
+    node = make_enrich_attractions_node(photo_tool, description_tool)
+    node({"itinerary": _itinerary_dict_with_items([_attraction_item("Louvre Museum")])})
+
+    photo_tool.get_photo.assert_called_once_with("Louvre Museum Paris", thumbnail=True)
+    description_tool.describe.assert_called_once_with(["Louvre Museum"], "Paris")
+
+
+def test_enrich_attractions_node_skips_non_attraction_items():
+    restaurant_item = ItineraryItem(
+        time_slot="evening",
+        start_time="2026-09-01T19:00:00",
+        end_time="2026-09-01T20:00:00",
+        activity_type="restaurant",
+        title="Le Comptoir",
+    )
+    photo_tool = MagicMock()
+    description_tool = MagicMock()
+    description_tool.describe.return_value = {}
+
+    node = make_enrich_attractions_node(photo_tool, description_tool)
+    result = node({"itinerary": _itinerary_dict_with_items([restaurant_item])})
+
+    photo_tool.get_photo.assert_not_called()
+    description_tool.describe.assert_called_once_with([], "Paris")
+    assert result["itinerary"]["days"][0]["items"][0]["photo_url"] is None
+
+
+def test_enrich_attractions_node_no_itinerary_records_error():
+    node = make_enrich_attractions_node(MagicMock(), MagicMock())
+    result = node({"itinerary": None})
+
+    assert result["completed_steps"] == ["enrich_attractions"]
+    assert "no itinerary available" in result["errors"][0]
+    assert "itinerary" not in result
+
+
+def test_enrich_attractions_node_tool_exception_records_error_without_wiping_itinerary():
+    photo_tool = MagicMock()
+    photo_tool.get_photo.side_effect = RuntimeError("rate limited")
+    description_tool = MagicMock()
+    description_tool.describe.return_value = {}
+
+    node = make_enrich_attractions_node(photo_tool, description_tool)
+    result = node({"itinerary": _itinerary_dict_with_items([_attraction_item()])})
+
+    assert result["completed_steps"] == ["enrich_attractions"]
+    assert "rate limited" in result["errors"][0]
+    assert "itinerary" not in result
 
 
 def test_check_conflicts_node_no_unresolved_conflicts():

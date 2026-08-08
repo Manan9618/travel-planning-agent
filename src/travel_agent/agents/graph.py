@@ -20,6 +20,7 @@ from travel_agent.agents.nodes import (
     make_build_itinerary_node,
     make_check_conflicts_node,
     make_check_weather_node,
+    make_enrich_attractions_node,
     make_find_attractions_node,
     make_find_restaurants_node,
     make_generate_map_node,
@@ -32,6 +33,7 @@ from travel_agent.agents.nodes import (
 )
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.agents.supervisor import SupervisorAgent
+from travel_agent.tools.attraction_describer import AttractionDescriberTool
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
@@ -44,6 +46,7 @@ from travel_agent.tools.pdf_generator import PDFGenerator
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.travel_map_generator import TravelMapGenerator
+from travel_agent.tools.unsplash_photo import UnsplashPhotoTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
 
 _WORKER_STEPS = [
@@ -54,6 +57,7 @@ _WORKER_STEPS = [
     PlanningStep.FIND_RESTAURANTS,
     PlanningStep.CHECK_WEATHER,
     PlanningStep.BUILD_ITINERARY,
+    PlanningStep.ENRICH_ATTRACTIONS,
     PlanningStep.CHECK_CONFLICTS,
     PlanningStep.OPTIMIZE_BUDGET,
     PlanningStep.GENERATE_MAP,
@@ -96,6 +100,8 @@ def build_planning_graph(
     restaurant_tool: RestaurantFinderTool | None = None,
     weather_tool: WeatherCheckerTool | None = None,
     itinerary_builder: ItineraryBuilder | MultiDayOptimizer | None = None,
+    photo_tool: UnsplashPhotoTool | None = None,
+    description_tool: AttractionDescriberTool | None = None,
     conflict_detector: ConflictDetector | None = None,
     conflict_resolver: ConflictResolver | None = None,
     budget_optimizer: BudgetOptimizer | None = None,
@@ -117,6 +123,8 @@ def build_planning_graph(
     # order, and cross-day balancing — same `.build()` signature, so it's a
     # drop-in default. Pass an explicit ItineraryBuilder() to opt out.
     itinerary_builder = itinerary_builder or MultiDayOptimizer()
+    photo_tool = photo_tool or UnsplashPhotoTool()
+    description_tool = description_tool or AttractionDescriberTool()
     conflict_detector = conflict_detector or ConflictDetector()
     conflict_resolver = conflict_resolver or ConflictResolver()
     budget_optimizer = budget_optimizer or BudgetOptimizer()
@@ -133,6 +141,10 @@ def build_planning_graph(
     graph.add_node(PlanningStep.FIND_RESTAURANTS.value, make_find_restaurants_node(restaurant_tool))
     graph.add_node(PlanningStep.CHECK_WEATHER.value, make_check_weather_node(weather_tool))
     graph.add_node(PlanningStep.BUILD_ITINERARY.value, make_build_itinerary_node(itinerary_builder))
+    graph.add_node(
+        PlanningStep.ENRICH_ATTRACTIONS.value,
+        make_enrich_attractions_node(photo_tool, description_tool),
+    )
     graph.add_node(
         PlanningStep.CHECK_CONFLICTS.value,
         make_check_conflicts_node(conflict_detector, conflict_resolver),

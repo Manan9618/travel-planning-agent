@@ -98,7 +98,7 @@ def test_all_search_steps_done_with_hotels_present_routes_to_build_itinerary():
     assert determine_valid_steps(state) == [PlanningStep.BUILD_ITINERARY]
 
 
-def test_build_itinerary_completed_routes_to_check_conflicts():
+def test_build_itinerary_completed_routes_to_enrich_attractions():
     state = {
         "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
         "completed_steps": [
@@ -109,6 +109,24 @@ def test_build_itinerary_completed_routes_to_check_conflicts():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+        ],
+        "hotels": [{"name": "Test Hotel"}],
+    }
+    assert determine_valid_steps(state) == [PlanningStep.ENRICH_ATTRACTIONS]
+
+
+def test_enrich_attractions_completed_routes_to_check_conflicts():
+    state = {
+        "preferences": {"origin": "Boston", "destination": "Paris", "start_date": "2026-09-01"},
+        "completed_steps": [
+            "parse_preferences",
+            "search_flights",
+            "search_hotels",
+            "find_attractions",
+            "find_restaurants",
+            "check_weather",
+            "build_itinerary",
+            "enrich_attractions",
         ],
         "hotels": [{"name": "Test Hotel"}],
     }
@@ -126,6 +144,7 @@ def test_check_conflicts_completed_routes_to_optimize_budget():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
         ],
         "hotels": [{"name": "Test Hotel"}],
@@ -145,6 +164,7 @@ def test_optimize_budget_completed_routes_to_generate_map():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
             "optimize_budget",
         ],
@@ -165,6 +185,7 @@ def test_generate_map_completed_routes_to_generate_pdf():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
             "optimize_budget",
             "generate_map",
@@ -186,6 +207,7 @@ def test_generate_pdf_completed_with_no_unresolved_conflicts_returns_done():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
             "optimize_budget",
             "generate_map",
@@ -208,6 +230,7 @@ def test_generate_pdf_completed_with_unresolved_conflicts_routes_to_human_review
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
             "optimize_budget",
             "generate_map",
@@ -230,6 +253,7 @@ def test_human_review_completed_returns_done_even_with_unresolved_conflicts():
             "find_restaurants",
             "check_weather",
             "build_itinerary",
+            "enrich_attractions",
             "check_conflicts",
             "optimize_budget",
             "generate_map",

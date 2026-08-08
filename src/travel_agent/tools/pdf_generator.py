@@ -16,7 +16,13 @@ attraction row, MakeMyTrip-style — e.g. a real Eiffel Tower photo next to an
 to `activity_type == "attraction"` only (not restaurants/hotels/transfers)
 to keep the extra Unsplash calls bounded; same graceful no-key/no-result
 fallback as the cover photo, so a row simply renders without a thumbnail
-rather than blocking or breaking the PDF.
+rather than blocking or breaking the PDF. Also renders a 2-3 sentence
+history/why-visit blurb (`item.description`) under the title when present —
+both `photo_url` and `description` are normally filled in by the
+`enrich_attractions` graph step before the PDF is generated, so this class
+reuses them rather than re-fetching; a standalone `PDFGenerator` call (e.g.
+in tests) still works, falling back to its own Unsplash lookup for the
+photo and simply showing no description.
 """
 
 from __future__ import annotations
@@ -82,6 +88,7 @@ section { page-break-inside: avoid; margin-bottom: 1.5em; }
 .item-main { flex: 1; }
 .item-time { color: #888; font-size: 9pt; }
 .item-title { font-weight: bold; }
+.item-description { color: #555; font-size: 9pt; margin-top: 2px; line-height: 1.35; }
 .item-cost { text-align: right; font-weight: bold; white-space: nowrap; }
 """
 
@@ -251,14 +258,23 @@ class PDFGenerator:
     def _item_row(self, item: ItineraryItem, destination: str) -> str:
         cost = f"${item.cost:,.0f}" if item.cost else ""
         thumb_html = ""
+        description_html = ""
         if item.activity_type == "attraction":
-            photo = self._photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
-            if photo:
-                image_b64 = self._download_as_base64(photo.url)
+            # `photo_url` is set by the `enrich_attractions` graph step when this
+            # itinerary came from a real planning run; standalone PDFGenerator
+            # usage (e.g. tests) falls back to a direct lookup here.
+            photo_url = item.photo_url
+            if not photo_url:
+                photo = self._photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
+                photo_url = photo.url if photo else None
+            if photo_url:
+                image_b64 = self._download_as_base64(photo_url)
                 if image_b64:
                     thumb_html = (
                         f'<img class="item-thumb" src="data:image/jpeg;base64,{image_b64}"/>'
                     )
+            if item.description:
+                description_html = f'<div class="item-description">{item.description}</div>'
         time_str = item.start_time.time().strftime("%H:%M")
         return f"""
         <div class="item-row">
@@ -266,6 +282,7 @@ class PDFGenerator:
           <div class="item-main">
             <div class="item-time">{time_str} &middot; {item.activity_type}</div>
             <div class="item-title">{item.title}</div>
+            {description_html}
           </div>
           <div class="item-cost">{cost}</div>
         </div>

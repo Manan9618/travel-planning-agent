@@ -17,6 +17,8 @@ function item(overrides: Partial<ItineraryItem>): ItineraryItem {
     lng: null,
     cost: null,
     notes: null,
+    photo_url: null,
+    description: null,
     ...overrides,
   }
 }
@@ -67,5 +69,32 @@ describe('DayCard', () => {
     const day: DayPlan = { ...emptyDay(), warnings: ['Pack rain gear'] }
     render(<DayCard day={day} defaultExpanded />)
     expect(screen.getByText('Pack rain gear')).toBeInTheDocument()
+  })
+
+  it('shows a photo thumbnail for an attraction with a photo_url', () => {
+    const day: DayPlan = {
+      ...emptyDay(),
+      items: [item({ photo_url: 'https://images.unsplash.com/eiffel' })],
+    }
+    render(<DayCard day={day} defaultExpanded />)
+    expect(screen.getByRole('img', { name: 'Louvre Museum' })).toHaveAttribute(
+      'src',
+      'https://images.unsplash.com/eiffel',
+    )
+  })
+
+  it('shows a description under the title when present', () => {
+    const day: DayPlan = {
+      ...emptyDay(),
+      items: [item({ description: 'A world-famous art museum in Paris.' })],
+    }
+    render(<DayCard day={day} defaultExpanded />)
+    expect(screen.getByText('A world-famous art museum in Paris.')).toBeInTheDocument()
+  })
+
+  it('renders no thumbnail or description when neither is present', () => {
+    const day: DayPlan = { ...emptyDay(), items: [item({})] }
+    render(<DayCard day={day} defaultExpanded />)
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 })

@@ -52,7 +52,14 @@ def _hotel():
     )
 
 
-def _item(title, activity_type="attraction", start="2026-09-02T09:00:00", cost=None):
+def _item(
+    title,
+    activity_type="attraction",
+    start="2026-09-02T09:00:00",
+    cost=None,
+    photo_url=None,
+    description=None,
+):
     return ItineraryItem(
         time_slot="morning",
         start_time=start,
@@ -60,6 +67,8 @@ def _item(title, activity_type="attraction", start="2026-09-02T09:00:00", cost=N
         activity_type=activity_type,
         title=title,
         cost=cost,
+        photo_url=photo_url,
+        description=description,
     )
 
 
@@ -244,6 +253,62 @@ def test_attraction_thumbnail_lookup_queries_title_and_destination():
     itinerary = _itinerary(days=[day])
     PDFGenerator(photo_tool=RecordingPhotoTool()).render_html(itinerary)
     assert ("Eiffel Tower Paris", True) in seen_queries
+
+
+def test_attraction_row_reuses_existing_photo_url_without_a_lookup(monkeypatch):
+    class RaisingPhotoTool:
+        def get_cover_photo(self, destination):
+            return None
+
+        def get_photo(self, query, thumbnail=False):
+            raise AssertionError("should not look up a photo when photo_url is already set")
+
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[_item("Eiffel Tower", photo_url="https://images.unsplash.com/preset-eiffel")],
+    )
+    itinerary = _itinerary(days=[day])
+    generator = PDFGenerator(photo_tool=RaisingPhotoTool())
+    monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
+    html = generator.render_html(itinerary)
+    assert 'class="item-thumb" src="data:image/jpeg;base64,ZmFrZWJ5dGVz"' in html
+
+
+def test_attraction_row_shows_description_when_present():
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[_item("Eiffel Tower", description="An iconic iron lattice tower in Paris.")],
+    )
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert '<div class="item-description">An iconic iron lattice tower in Paris.</div>' in html
+
+
+def test_attraction_row_has_no_description_div_when_absent():
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[_item("Eiffel Tower")])
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert '<div class="item-description">' not in html
+
+
+def test_non_attraction_rows_never_get_a_description():
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[
+            _item(
+                "Bistro",
+                activity_type="restaurant",
+                cost=30,
+                description="This should never be rendered",
+            )
+        ],
+    )
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert '<div class="item-description">' not in html
 
 
 # --- map section -------------------------------------------------------------

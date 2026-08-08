@@ -123,6 +123,8 @@ describe('RunSummary', () => {
                     lng: null,
                     cost: null,
                     notes: null,
+                    photo_url: null,
+                    description: null,
                   },
                 ],
                 weather: null,

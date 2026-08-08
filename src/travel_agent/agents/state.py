@@ -20,6 +20,7 @@ class PlanningStep(str, Enum):
     FIND_RESTAURANTS = "find_restaurants"
     CHECK_WEATHER = "check_weather"
     BUILD_ITINERARY = "build_itinerary"
+    ENRICH_ATTRACTIONS = "enrich_attractions"
     CHECK_CONFLICTS = "check_conflicts"
     OPTIMIZE_BUDGET = "optimize_budget"
     GENERATE_MAP = "generate_map"
@@ -80,6 +81,8 @@ def determine_valid_steps(state: PlanningState) -> list[PlanningStep]:
     if PlanningStep.BUILD_ITINERARY.value not in completed and state.get("hotels"):
         return [PlanningStep.BUILD_ITINERARY]
     if PlanningStep.BUILD_ITINERARY.value in completed:
+        if PlanningStep.ENRICH_ATTRACTIONS.value not in completed:
+            return [PlanningStep.ENRICH_ATTRACTIONS]
         if PlanningStep.CHECK_CONFLICTS.value not in completed:
             return [PlanningStep.CHECK_CONFLICTS]
         if PlanningStep.OPTIMIZE_BUDGET.value not in completed:

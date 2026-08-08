@@ -50,6 +50,7 @@ def test_plan_runs_to_completion_and_produces_full_itinerary(client):
         "find_restaurants",
         "check_weather",
         "build_itinerary",
+        "enrich_attractions",
         "check_conflicts",
         "optimize_budget",
         "generate_map",

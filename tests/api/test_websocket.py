@@ -46,6 +46,7 @@ def test_websocket_includes_a_step_completed_event_per_planning_step(client):
         "find_restaurants",
         "check_weather",
         "build_itinerary",
+        "enrich_attractions",
         "check_conflicts",
         "optimize_budget",
         "generate_map",

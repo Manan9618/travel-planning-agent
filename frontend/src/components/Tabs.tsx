@@ -15,7 +15,7 @@ interface Props {
 
 export function Tabs({ tabs, active, onChange, children }: Props) {
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full w-full min-w-0 flex-col">
       <div
         role="tablist"
         className="flex shrink-0 gap-1 border-b border-line px-3 pt-2 dark:border-line-dark"

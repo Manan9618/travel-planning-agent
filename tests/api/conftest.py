@@ -52,6 +52,7 @@ from travel_agent.models.core import (
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver
 from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
+from travel_agent.tools.pdf_generator import PDFGenerator
 
 
 class FixedTravelTime:
@@ -148,6 +149,29 @@ class StubWeatherTool:
         return []
 
 
+class StubPhotoTool:
+    """No-op stand-in for UnsplashPhotoTool. Without this, a real
+    UNSPLASH_ACCESS_KEY in the environment would make these offline tests
+    hit the real Unsplash API on every enrich_attractions/generate_pdf
+    step, the same offline-safety rationale as FixedTravelTime above."""
+
+    def get_cover_photo(self, destination):
+        return None
+
+    def get_photo(self, query, thumbnail=False):
+        return None
+
+
+class StubDescriptionTool:
+    """No-op stand-in for AttractionDescriberTool, for the same reason
+    StubPhotoTool exists: without it, a real OPENAI_API_KEY means these
+    offline tests would make a real LLM call on every enrich_attractions
+    step."""
+
+    def describe(self, titles, destination):
+        return {}
+
+
 class FakeNarrator:
     def __init__(self, tokens=None, fail=False):
         self._tokens = tokens if tokens is not None else ["Bon", " voyage", "!"]
@@ -179,8 +203,11 @@ def build_stub_graph(parser=None):
         itinerary_builder=MultiDayOptimizer(
             travel_time_estimator=FixedTravelTime(), distance_matrix_tool=FixedDistanceMatrix()
         ),
+        photo_tool=StubPhotoTool(),
+        description_tool=StubDescriptionTool(),
         conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
         conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
+        pdf_generator=PDFGenerator(photo_tool=StubPhotoTool()),
         supervisor=DeterministicSupervisor(),
         render_pdf_map_thumbnail=False,
         checkpointer=MemorySaver(),

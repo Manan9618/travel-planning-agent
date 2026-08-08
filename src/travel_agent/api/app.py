@@ -110,7 +110,14 @@ def create_app(
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     def _config(session_id: str) -> dict:
-        return {"configurable": {"thread_id": session_id}}
+        # LangGraph's default recursion_limit (25) counts each worker-step ->
+        # supervisor round trip as 2 ticks; with 12 worker steps (as of the
+        # enrich_attractions addition) plus one final DONE-only supervisor
+        # tick, a full run needs exactly 25 - the default leaves zero
+        # headroom and a genuinely failing run (retried steps, extra
+        # human-review round trips) would hit GraphRecursionError instead of
+        # finishing or erroring cleanly. Set generously above that.
+        return {"configurable": {"thread_id": session_id}, "recursion_limit": 100}
 
     def _state_response(session_id: str) -> SessionStateResponse:
         record = session_store.get(session_id)

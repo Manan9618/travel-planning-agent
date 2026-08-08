@@ -585,6 +585,67 @@ generic Paris photo on the cover.
       each thumbnail is a real, correctly-matched photo of that exact
       landmark — the restaurant row correctly has no thumbnail
 
+**Post-Week-16 — Full-width canvas fix, web UI photos, and attraction
+history** (same enhancement pass, follow-up to the above): the itinerary
+canvas wasn't actually filling wide screens, and attraction photos/history
+only existed in the PDF, not the live chat UI.
+
+- [x] Fixed a real CSS bug: `Tabs.tsx`'s root div was `flex h-full flex-col`
+      with no `w-full`/`flex-1` — as a flex item inside the canvas's
+      row-flex container, it shrank to fit its content (the day-card table)
+      instead of filling available width, leaving a large blank strip on
+      wide screens. One-line fix (`w-full min-w-0` added); verified at
+      1920×1080 that the tab bar now spans the full 1500px canvas width
+      (window width minus the 420px chat rail), not just its content width
+- [x] New `enrich_attractions` LangGraph step (between `build_itinerary` and
+      `check_conflicts`): for every `activity_type == "attraction"` item,
+      fetches a photo (`UnsplashPhotoTool.get_photo`) and a 2-3 sentence
+      history/why-visit blurb, writing `photo_url`/`description` onto the
+      `ItineraryItem` itself — so both the web UI and the PDF read the same
+      enriched data instead of each fetching independently. `PDFGenerator`
+      now reuses `item.photo_url` when already set, only falling back to
+      its own lookup for a standalone `PDFGenerator` call (e.g. tests)
+- [x] New `AttractionDescriberTool`: one batched GPT-4o structured-output
+      call per itinerary (not one call per attraction) returns `{title:
+      description}` for every attraction, keeping LLM cost/latency bounded
+      regardless of trip length. Cached per (title, destination) pair with
+      a 30-day TTL — a landmark's history doesn't change. Same graceful
+      degradation as every other optional enrichment in this project: an
+      LLM failure just means no descriptions that run, never a blocked plan
+- [x] `ItineraryPanel`/`DayCard` now render the photo thumbnail and history
+      blurb under each attraction's title, the same MakeMyTrip-style layout
+      as the PDF, adapted to the app's existing type/color tokens
+- [x] Found and fixed a real, previously-latent bug while testing this:
+      LangGraph's default `recursion_limit` (25) counts each worker-step ->
+      supervisor round trip as 2 ticks. With 11 worker steps this totaled
+      23 - safely under the limit; adding `enrich_attractions` as a 12th
+      step pushed a full successful run to exactly 25, tipping over into
+      `GraphRecursionError`. This wasn't a test-only issue - the production
+      FastAPI backend used the same unset default. Fixed by setting an
+      explicit, generous `recursion_limit: 100` everywhere the graph is
+      configured (`api/app.py`'s `_config()`, plus the integration/API test
+      suites' own graph configs)
+- [x] Found and fixed a second real issue while testing: the offline
+      integration/API test suites stub every external tool *except* the
+      photo/description tools, which previously no-op'd safely only because
+      `UNSPLASH_ACCESS_KEY` happened to be blank. Adding a real key would
+      have silently made these "offline" suites hit the live Unsplash and
+      OpenAI APIs on every run. Added `StubPhotoTool`/`StubDescriptionTool`
+      no-ops to both suites' graph-building helpers, restoring true
+      offline-ness regardless of what's configured in `.env`
+- [x] 21 new backend tests (6 for `make_enrich_attractions_node`, 11 for
+      `AttractionDescriberTool`, 4 more `PDFGenerator` cases for
+      `photo_url` reuse and description rendering) plus 3 frontend tests
+      (`DayCard` photo/description rendering) bringing the total to 533
+      backend + 67 frontend tests passing
+- [x] Live-tested end-to-end in a real headless browser at 1920×1080
+      against the real running `uvicorn` server: submitted "5 days in
+      Paris... I love art and museums", confirmed the tab bar now spans the
+      full canvas width, and confirmed real photos + accurate history blurbs
+      for Musée d'Orsay, Notre-Dame Cathedral, the Eiffel Tower, and the Arc
+      de Triomphe in both the Itinerary tab and the generated PDF, with zero
+      console errors and zero failed network requests
+
 ## Setup
 
 ```bash

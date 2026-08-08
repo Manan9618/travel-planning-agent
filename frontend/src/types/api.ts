@@ -11,6 +11,7 @@ export const PLANNING_STEPS = [
   'find_restaurants',
   'check_weather',
   'build_itinerary',
+  'enrich_attractions',
   'check_conflicts',
   'optimize_budget',
   'generate_map',
@@ -27,6 +28,7 @@ export const STEP_LABELS: Record<PlanningStep, string> = {
   find_restaurants: 'Finding restaurants',
   check_weather: 'Checking weather',
   build_itinerary: 'Building your itinerary',
+  enrich_attractions: 'Finding photos & history',
   check_conflicts: 'Checking for conflicts',
   optimize_budget: 'Optimizing your budget',
   generate_map: 'Generating map',
@@ -104,6 +106,8 @@ export interface ItineraryItem {
   lng: number | null
   cost: number | null
   notes: string | null
+  photo_url: string | null
+  description: string | null
 }
 
 export interface DayPlan {

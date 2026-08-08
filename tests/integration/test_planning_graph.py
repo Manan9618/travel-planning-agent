@@ -114,6 +114,28 @@ class FailingFlightTool:
         raise RuntimeError("provider unreachable")
 
 
+class StubPhotoTool:
+    """No-op stand-in for UnsplashPhotoTool — keeps enrich_attractions/
+    generate_pdf offline in these graph-wiring tests, same rationale as
+    FixedTravelTime above (a real UNSPLASH_ACCESS_KEY would otherwise make
+    these tests hit the live API)."""
+
+    def get_cover_photo(self, destination):
+        return None
+
+    def get_photo(self, query, thumbnail=False):
+        return None
+
+
+class StubDescriptionTool:
+    """No-op stand-in for AttractionDescriberTool, same offline rationale
+    as StubPhotoTool (a real OPENAI_API_KEY would otherwise make these
+    tests place a real LLM call)."""
+
+    def describe(self, titles, destination):
+        return {}
+
+
 def _build_test_graph(checkpointer, flight_tool=None, parser=None):
     return build_planning_graph(
         parser=parser or StubParser(),
@@ -123,9 +145,11 @@ def _build_test_graph(checkpointer, flight_tool=None, parser=None):
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
+        photo_tool=StubPhotoTool(),
+        description_tool=StubDescriptionTool(),
         conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
         conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
-        pdf_generator=PDFGenerator(),
+        pdf_generator=PDFGenerator(photo_tool=StubPhotoTool()),
         pdf_output_dir=tempfile.mkdtemp(),
         # Skips the real headless-browser map-thumbnail rasterization (Week
         # 13) in these offline graph-wiring tests — that path has its own
@@ -146,7 +170,7 @@ def _memory_checkpointer():
 def test_full_graph_run_populates_every_field():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer)
-    config = {"configurable": {"thread_id": "t1"}}
+    config = {"configurable": {"thread_id": "t1"}, "recursion_limit": 100}
 
     result = graph.invoke(
         {"raw_text": "5 days in Paris from Boston", "errors": [], "completed_steps": []},
@@ -168,6 +192,7 @@ def test_full_graph_run_populates_every_field():
         "find_restaurants",
         "check_weather",
         "build_itinerary",
+        "enrich_attractions",
         "check_conflicts",
         "optimize_budget",
         "generate_map",
@@ -185,7 +210,7 @@ def test_full_graph_run_populates_every_field():
 def test_graph_terminates_and_does_not_loop_forever():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer)
-    config = {"configurable": {"thread_id": "t2"}}
+    config = {"configurable": {"thread_id": "t2"}, "recursion_limit": 100}
     # if routing were broken this would hang or exceed the recursion limit
     result = graph.invoke({"raw_text": "trip", "errors": [], "completed_steps": []}, config=config)
     assert result["completed_steps"].count("parse_preferences") == 1
@@ -194,7 +219,7 @@ def test_graph_terminates_and_does_not_loop_forever():
 def test_tool_failure_is_captured_without_halting_the_graph():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer, flight_tool=FailingFlightTool())
-    config = {"configurable": {"thread_id": "t3"}}
+    config = {"configurable": {"thread_id": "t3"}, "recursion_limit": 100}
 
     result = graph.invoke(
         {"raw_text": "5 days in Paris from Boston", "errors": [], "completed_steps": []},
@@ -221,7 +246,7 @@ def test_state_persists_across_fresh_connections():
     checkpointer1 = SqliteSaver(conn1)
     checkpointer1.setup()
     graph1 = _build_test_graph(checkpointer1)
-    config = {"configurable": {"thread_id": "persist-1"}}
+    config = {"configurable": {"thread_id": "persist-1"}, "recursion_limit": 100}
     graph1.invoke(
         {"raw_text": "5 days in Paris from Boston", "errors": [], "completed_steps": []},
         config=config,
@@ -259,15 +284,17 @@ def test_no_origin_skips_flights_but_completes_everything_else():
         restaurant_tool=StubRestaurantTool(),
         weather_tool=StubWeatherTool(),
         itinerary_builder=ItineraryBuilder(travel_time_estimator=FixedTravelTime()),
+        photo_tool=StubPhotoTool(),
+        description_tool=StubDescriptionTool(),
         conflict_detector=ConflictDetector(travel_time_estimator=FixedTravelTime()),
         conflict_resolver=ConflictResolver(travel_time_estimator=FixedTravelTime()),
-        pdf_generator=PDFGenerator(),
+        pdf_generator=PDFGenerator(photo_tool=StubPhotoTool()),
         pdf_output_dir=tempfile.mkdtemp(),
         render_pdf_map_thumbnail=False,
         supervisor=DeterministicSupervisor(),
         checkpointer=checkpointer,
     )
-    config = {"configurable": {"thread_id": "t4"}}
+    config = {"configurable": {"thread_id": "t4"}, "recursion_limit": 100}
     result = graph.invoke(
         {"raw_text": "5 days in Paris", "errors": [], "completed_steps": []}, config=config
     )
@@ -303,7 +330,7 @@ class LowBudgetParser:
 def test_unresolvable_budget_conflict_pauses_at_human_review():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
-    config = {"configurable": {"thread_id": "human-1"}}
+    config = {"configurable": {"thread_id": "human-1"}, "recursion_limit": 100}
 
     result = graph.invoke(
         {
@@ -328,7 +355,7 @@ def test_unresolvable_budget_conflict_pauses_at_human_review():
 def test_approving_unresolvable_conflict_completes_the_run():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
-    config = {"configurable": {"thread_id": "human-2"}}
+    config = {"configurable": {"thread_id": "human-2"}, "recursion_limit": 100}
 
     graph.invoke(
         {
@@ -348,7 +375,7 @@ def test_approving_unresolvable_conflict_completes_the_run():
 def test_rejecting_unresolvable_conflict_records_an_error():
     checkpointer, _ = _memory_checkpointer()
     graph = _build_test_graph(checkpointer, parser=LowBudgetParser())
-    config = {"configurable": {"thread_id": "human-3"}}
+    config = {"configurable": {"thread_id": "human-3"}, "recursion_limit": 100}
 
     graph.invoke(
         {

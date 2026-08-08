@@ -159,6 +159,12 @@ class ItineraryItem(BaseModel):
     lng: float | None = None
     cost: float | None = Field(default=None, ge=0)
     notes: str | None = None
+    photo_url: str | None = Field(
+        default=None, description="Unsplash photo URL for attraction items, set post-Week-16"
+    )
+    description: str | None = Field(
+        default=None, description="2-3 sentence history/why-visit blurb, attraction items only"
+    )
 
 
 class DayPlan(BaseModel):

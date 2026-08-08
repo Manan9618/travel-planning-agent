@@ -30,6 +30,7 @@ from travel_agent.models.core import (
     TravelPreferences,
     WeatherForecast,
 )
+from travel_agent.tools.attraction_describer import AttractionDescriberTool
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
@@ -42,6 +43,7 @@ from travel_agent.tools.pdf_generator import PDFGenerator
 from travel_agent.tools.preference_parser import PreferenceParser
 from travel_agent.tools.restaurant_finder import RestaurantFinderTool
 from travel_agent.tools.travel_map_generator import TravelMapGenerator, render_thumbnail_png
+from travel_agent.tools.unsplash_photo import UnsplashPhotoTool
 from travel_agent.tools.weather_checker import WeatherCheckerTool
 from travel_agent.utils.iata import city_to_iata
 
@@ -235,6 +237,48 @@ def make_build_itinerary_node(builder: ItineraryBuilder | MultiDayOptimizer) -> 
                 "itinerary": None,
                 "completed_steps": [PlanningStep.BUILD_ITINERARY.value],
                 "errors": [f"build_itinerary: {exc}"],
+            }
+
+    return node
+
+
+def make_enrich_attractions_node(
+    photo_tool: UnsplashPhotoTool, description_tool: AttractionDescriberTool
+) -> Node:
+    def node(state: PlanningState) -> dict:
+        try:
+            itinerary_data = state.get("itinerary")
+            if not itinerary_data:
+                raise ValueError("no itinerary available to enrich")
+            itinerary = Itinerary(**itinerary_data)
+            destination = itinerary.preferences.destination
+
+            attraction_items = [
+                item
+                for day in itinerary.days
+                for item in day.items
+                if item.activity_type == "attraction"
+            ]
+            descriptions = description_tool.describe(
+                [item.title for item in attraction_items], destination
+            )
+            for item in attraction_items:
+                photo = photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
+                if photo:
+                    item.photo_url = photo.url
+                if item.title in descriptions:
+                    item.description = descriptions[item.title]
+
+            return {
+                "itinerary": itinerary.model_dump(mode="json"),
+                "completed_steps": [PlanningStep.ENRICH_ATTRACTIONS.value],
+                "errors": [],
+            }
+        except Exception as exc:
+            logger.warning("enrich_attractions failed: %s", exc)
+            return {
+                "completed_steps": [PlanningStep.ENRICH_ATTRACTIONS.value],
+                "errors": [f"enrich_attractions: {exc}"],
             }
 
     return node

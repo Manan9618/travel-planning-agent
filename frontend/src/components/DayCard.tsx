@@ -22,19 +22,39 @@ function WalkConnector({ km }: { km: number }) {
 }
 
 function ItemRow({ item }: { item: ItineraryItem }) {
+  const hasDetail = Boolean(item.photo_url || item.description)
   return (
-    <div className="flex items-baseline gap-3 py-1.5 text-sm">
-      <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-ink-muted dark:text-ink-muted-dark">
-        {item.start_time.slice(11, 16)}
-      </span>
-      <span className="flex-1 text-ink dark:text-ink-dark">{item.title}</span>
-      <span className="shrink-0 font-mono text-[10px] text-ink-faint uppercase dark:text-ink-faint-dark">
-        {item.activity_type}
-      </span>
-      {item.cost != null && (
-        <span className="shrink-0 font-mono text-xs tabular-nums text-ink-muted dark:text-ink-muted-dark">
-          ${item.cost.toFixed(0)}
+    <div className="py-1.5">
+      <div className="flex items-baseline gap-3 text-sm">
+        <span className="w-12 shrink-0 font-mono text-xs tabular-nums text-ink-muted dark:text-ink-muted-dark">
+          {item.start_time.slice(11, 16)}
         </span>
+        <span className="flex-1 text-ink dark:text-ink-dark">{item.title}</span>
+        <span className="shrink-0 font-mono text-[10px] text-ink-faint uppercase dark:text-ink-faint-dark">
+          {item.activity_type}
+        </span>
+        {item.cost != null && (
+          <span className="shrink-0 font-mono text-xs tabular-nums text-ink-muted dark:text-ink-muted-dark">
+            ${item.cost.toFixed(0)}
+          </span>
+        )}
+      </div>
+      {hasDetail && (
+        <div className="mt-1.5 flex gap-3 pl-[3.75rem]">
+          {item.photo_url && (
+            <img
+              src={item.photo_url}
+              alt={item.title}
+              loading="lazy"
+              className="h-16 w-24 shrink-0 rounded-md object-cover"
+            />
+          )}
+          {item.description && (
+            <p className="text-xs leading-relaxed text-ink-muted dark:text-ink-muted-dark">
+              {item.description}
+            </p>
+          )}
+        </div>
       )}
     </div>
   )
