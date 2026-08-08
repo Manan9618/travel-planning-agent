@@ -1,4 +1,4 @@
-.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test serve frontend-install frontend-dev frontend-build frontend-test frontend-lint
+.PHONY: install fmt lint test cov precommit smoke weather-ab budget-scenarios geo-clusters route-benchmark multi-day-benchmark evaluate map-test pdf-test serve frontend-install frontend-dev frontend-build frontend-test frontend-lint e2e load-test mutation-test
 
 install:
 	poetry install
@@ -18,6 +18,24 @@ test:
 
 cov:
 	poetry run pytest --cov=travel_agent --cov-report=term-missing
+
+# Real browser (Playwright) against a real backend+frontend, both stub-tool-backed
+# for speed/determinism (Week 17). Requires `cd frontend && npm install` once.
+e2e:
+	poetry run pytest tests/e2e
+
+# 10 concurrent planning sessions against the same stub-tool-backed backend
+# tests/e2e uses (Week 17's load-testing target). Start the backend first:
+#   poetry run uvicorn tests.e2e.stub_backend:app --port 8811
+load-test:
+	poetry run locust -f scripts/locustfile.py --host http://127.0.0.1:8811 \
+		--users 10 --spawn-rate 10 --run-time 90s --headless
+
+# Mutation testing (Week 17) scoped to the algorithm-dense modules where a
+# surviving mutant would actually indicate a real test-quality gap; see
+# setup.cfg for the exact module list and README for rationale/results.
+mutation-test:
+	poetry run mutmut run
 
 precommit:
 	poetry run pre-commit run --all-files

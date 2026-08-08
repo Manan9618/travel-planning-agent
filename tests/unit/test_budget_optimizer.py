@@ -230,3 +230,18 @@ def test_evaluate_respects_priority_weights_in_allocation():
     itinerary = _itinerary(prefs, [_day(1)])
     evaluation = _optimizer().evaluate(itinerary)
     assert evaluation.allocation.hotel == 800
+
+
+def test_evaluate_respects_budget_tier_in_allocation():
+    # Found via mutation testing (Week 17): a mutant that replaced
+    # evaluate()'s `tier=prefs.budget_tier` with `tier=None` survived,
+    # because every other evaluate() test uses a tier-less or mid-range
+    # preference, which produces the same split as the None default
+    # (_DEFAULT_SPLIT *is* MID_RANGE) - so evaluate()'s pass-through of
+    # budget_tier into allocate() was never actually exercised through
+    # evaluate() itself, only tested directly against allocate(). LUXURY
+    # (60% hotel) vs MID_RANGE's 50% default makes the difference visible.
+    prefs = _prefs(budget_total=1000, tier=BudgetTier.LUXURY)
+    itinerary = _itinerary(prefs, [_day(1)])
+    evaluation = _optimizer().evaluate(itinerary)
+    assert evaluation.allocation.hotel == 600

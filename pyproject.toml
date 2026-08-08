@@ -37,6 +37,9 @@ playwright = "^1.62.0"
 pypdf = "^6.14.2"
 httpx = "^0.28.1"
 pytest-asyncio = "^1.4.0"
+pytest-playwright = "^0.8.0"
+locust = "^2.46.3"
+mutmut = "^3.7.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -54,6 +57,33 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# tests/e2e needs a real browser plus real backend/frontend subprocesses
+# (see tests/e2e/conftest.py) - too slow/heavy for the default `pytest`/
+# `make test` loop, so it's deliberately left out of testpaths (only
+# applies when no path is given on the command line) and run separately
+# via `make e2e`, which passes tests/e2e explicitly.
+testpaths = ["tests/unit", "tests/integration", "tests/api"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+
+[tool.mutmut]
+# Scoped to the algorithm-dense modules (real branching logic - clustering,
+# constraint search, scoring) where a surviving mutant would actually
+# indicate a real test-quality gap, rather than the whole tree: the many
+# thin HTTP-tool-wrapper modules (flight/hotel/attraction search, etc.)
+# would multiply mutant count for little signal, since their own logic is
+# mostly "call the API, map the response" already covered by every
+# error-path/fallback test written for them. See README's Week 17 section
+# for the mutation score and what surviving mutants (if any) revealed.
+only_mutate = [
+    "src/travel_agent/tools/route_optimizer.py",
+    "src/travel_agent/tools/budget_optimizer.py",
+    "src/travel_agent/tools/conflict_detector.py",
+    "src/travel_agent/tools/geo_clustering.py",
+    "src/travel_agent/tools/multi_day_optimizer.py",
+    "src/travel_agent/tools/weather_matcher.py",
+]
+# tests/unit only (fast, deterministic, no network) - not tests/integration
+# or tests/api, which would multiply per-mutant runtime for no extra
+# coverage of these particular modules.
+pytest_add_cli_args_test_selection = ["tests/unit"]

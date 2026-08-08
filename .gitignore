@@ -21,3 +21,5 @@ build/
 node_modules/
 .langsmith/
 output/
+mutants/
+.mutmut-cache

@@ -691,6 +691,103 @@ activities", landing on nonsense results).
       (The National Gallery, St. Paul's Cathedral, Tower Bridge), and zero
       console errors or failed network requests throughout
 
+**Phase 5, Week 17 — Comprehensive Testing Suite** — done
+
+- [x] Unit + integration test target already exceeded before this week
+      started: 540 backend tests / 98% coverage, 67 frontend tests — this
+      week's actual new work was the three layers the plan calls for that
+      genuinely didn't exist yet: a real-browser E2E suite, load testing,
+      and mutation testing
+- [x] **Playwright E2E suite** (`tests/e2e/`, Python's `pytest-playwright`
+      rather than a separate `@playwright/test` TypeScript toolchain — this
+      project already had `playwright` as a Python dependency since Week
+      13, and using it keeps pytest as the one test runner for the whole
+      stack instead of fragmenting into two): a real Chromium browser
+      drives the real React build over real HTTP/WebSocket against a real
+      `uvicorn` process, all three genuinely new — component tests
+      (Vitest) mock `lib/api.ts` directly and never touch the wire; API
+      tests (`tests/api/`) never render a pixel. `tests/e2e/stub_backend.py`
+      wires the real `create_app()`/`build_planning_graph()` with the same
+      deterministic in-memory stub tools `tests/api/conftest.py` already
+      established, so this suite is fast and free rather than depending on
+      live third-party APIs; `tests/e2e/conftest.py` launches both the
+      backend (`uvicorn`, port 8811) and frontend (`vite dev`, port 5811)
+      as real subprocesses, health-polls them, and tears both down after
+      the session — deliberately different ports from normal dev
+      (8000/5173) so `make e2e` can run alongside a developer's own
+      `make serve`
+- [x] 4 E2E specs covering genuine user journeys: full planning journey
+      across all four canvas tabs (Itinerary/Map/Budget/PDF preview) with
+      zero console errors, the exact `/refine` crash from earlier this
+      session formalized as a permanent regression test, dark mode, and
+      the mobile chat/canvas toggle — excluded from the default `pytest`/
+      `make test` run (needs a real browser + two real servers, too slow
+      for the everyday loop) via `make e2e` instead
+- [x] Found and fixed two real bugs getting the harness itself working,
+      not the app: (1) `uvicorn tests.e2e.stub_backend:app` needs `src/` on
+      `PYTHONPATH` the same way plain `make serve` did back at Week 15 —
+      pytest's own `pythonpath` ini option doesn't extend to a subprocess;
+      (2) Vite's dev server (no `--host` flag) binds only the IPv6 loopback
+      for `localhost`, so polling `http://127.0.0.1:5811` for readiness
+      connection-refused forever while `http://localhost:5811` worked —
+      switched the frontend health-check/base URL to `localhost`
+- [x] **Load testing** (`scripts/locustfile.py`, `make load-test`): 10
+      concurrent simulated users, each submitting one real `POST /plan`
+      and polling to completion then stopping — a single burst matching
+      the plan's literal "handles 10 concurrent planning sessions" ask,
+      not sustained hammering. Against the same stub-backed backend (what's
+      under test is this project's own concurrency handling — the async
+      background task per session, the SQLite checkpointer under
+      concurrent writes, the rate-limit middleware — not third-party API
+      behavior). Live result: **10/10 sessions completed successfully, 0
+      failures**, average full session time 2.06s (`POST /plan` itself
+      averaged 36ms; the app does the real planning work in a background
+      task, so the client-visible latency is almost entirely the polling
+      loop, not the request itself)
+- [x] **Mutation testing** (`mutmut`, `make mutation-test`): scoped to the
+      6 algorithm-dense modules where a surviving mutant would actually
+      indicate a real test-quality gap — `route_optimizer.py`,
+      `budget_optimizer.py`, `conflict_detector.py`, `geo_clustering.py`,
+      `multi_day_optimizer.py`, `weather_matcher.py` — rather than the
+      whole tree, since the many thin HTTP-tool-wrapper modules
+      (flight/hotel/attraction search) would multiply mutant count for
+      little signal beyond what their existing error-path/fallback tests
+      already cover. Run against `tests/unit` only (fast, deterministic,
+      no network) to keep per-mutant runtime low.
+      **979 mutants generated across the 6 modules: 530 killed outright, 340
+      timed out (mutmut counts a timeout as caught — a mutation that hangs
+      or drastically slows a bounded search/clustering algorithm is just as
+      detectably wrong as one that fails an assertion), 109 survived —
+      an 88.9% mutation score.** The high timeout share makes sense given
+      what these specific modules are: `multi_day_optimizer.py`'s bounded
+      backtracking search and `geo_clustering.py`'s DBSCAN loop are exactly
+      the kind of code where mutating a boundary/termination condition
+      turns a fast algorithm into a slow-or-infinite one
+    - Spot-checked survivors across all 6 files (`mutmut show <id>`) rather
+      than treating "109 survived" as one undifferentiated number: several
+      are genuine equivalent mutants indistinguishable by any test (e.g.
+      `zip(..., strict=False)` → `strict=None` — Python's `zip` only checks
+      truthiness, so this literally cannot change behavior), several are in
+      `geo_clustering.py`'s Folium map-rendering internals (exact marker
+      colors/HTML structure that tests reasonably check the *shape* of, not
+      byte-for-byte), and one was a real, worth-fixing gap:
+      `BudgetOptimizer.evaluate()`'s `tier=prefs.budget_tier` argument
+      mutated to `tier=None` survived because every existing `evaluate()`
+      test happened to use a tier-less or mid-range preference — which
+      produces the *same* split as the `None` default, since
+      `_DEFAULT_SPLIT` **is** `MID_RANGE` — so `evaluate()`'s pass-through
+      of `budget_tier` into `allocate()` was tested directly against
+      `allocate()` but never actually exercised through `evaluate()` itself
+    - Fixed that one: added
+      `test_evaluate_respects_budget_tier_in_allocation` (asserts a LUXURY
+      itinerary's `evaluate()` result reflects LUXURY's 60% hotel split,
+      not `MID_RANGE`'s 50%) — a real regression this specific mutant would
+      have shipped silently. Did not attempt to fix all 109 individually;
+      that's disproportionate scope for what mutation testing is for here
+      (a targeted second opinion on test quality, not a mandate to chase
+      every survivor including equivalent mutants that no test ever could
+      kill) — the rest are left as a documented, not urgent, backlog
+
 ## Setup
 
 ```bash
