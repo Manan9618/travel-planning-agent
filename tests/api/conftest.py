@@ -104,9 +104,20 @@ class StubParser:
         defaults.update(self._overrides)
         return TravelPreferences(**defaults)
 
+    def parse_partial(self, text, reference_date=None):
+        # Mirrors a real refinement parse that only reports what it's
+        # confident changed — no destination/dates unless a test explicitly
+        # passes them via overrides, so /refine's merge-over-existing-prefs
+        # behavior gets genuinely exercised rather than just re-asserting
+        # fixed defaults.
+        return dict(self._overrides)
+
 
 class FailingParser:
     def parse(self, text, reference_date=None):
+        raise RuntimeError("parser boom")
+
+    def parse_partial(self, text, reference_date=None):
         raise RuntimeError("parser boom")
 
 

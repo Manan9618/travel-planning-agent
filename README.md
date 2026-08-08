@@ -646,6 +646,51 @@ only existed in the PDF, not the live chat UI.
       de Triomphe in both the Itinerary tab and the generated PDF, with zero
       console errors and zero failed network requests
 
+**Post-Week-16 — Real `/refine` crash found via live use** (same day, found
+by actually clicking a refinement chip against a real running server): a
+refinement like the **"More outdoor activities"** chip on a London trip
+either 500'd with "Load failed" in the UI, or — worse — silently replanned
+the *entire* trip around "outdoor activities" as if it were the
+destination (real hotels/attractions searches for a place called "outdoor
+activities", landing on nonsense results).
+
+- [x] Root cause: `POST /refine` called the same `PreferenceParser.parse()`
+      used for a brand-new `/plan` request, which requires a destination.
+      A refinement chip's text has no destination in it at all, and the
+      parser's own system prompt correctly forbids inventing one — so the
+      LLM's structured-output call itself failed pydantic validation
+      (`destination` was a required field), an unhandled exception that
+      escaped `/refine` as a bare 500. On the runs where the LLM filled
+      `destination` in anyway rather than the call failing, the merge logic
+      then let that guess silently overwrite the parent session's real
+      destination
+- [x] Fix: added `PreferenceParser.parse_partial()` — same LLM call, but
+      `_ParsedFields.destination` is now optional and `parse_partial()`
+      returns a raw field dict (no destination requirement) for `/refine`
+      to overlay onto the existing session's preferences, instead of
+      building a complete `TravelPreferences` that demands one. `parse()`
+      (still used by `/plan`) now explicitly raises `ValueError` when the
+      LLM can't determine a destination, rather than leaning on pydantic's
+      validation error as the enforcement mechanism
+- [x] Also fixed while in there: `interests`/`must_see`/
+      `dietary_restrictions`/`accessibility_needs` used to be fully
+      *replaced* by whatever the refinement's own (partial) parse
+      contained, so "more outdoor activities" would have silently dropped
+      an original "art and museums" interest even once the crash was
+      fixed. These four list fields now merge by union (order-preserving,
+      deduped) instead of replace
+- [x] 7 new backend tests (5 in `test_preference_parser.py` for the
+      optional-destination/`parse_partial` behavior, 2 new regression
+      tests in `test_refine_endpoint.py` reproducing the exact no-crash and
+      interests-preserved scenarios, plus stub-parser updates); 540 backend
+      tests passing
+- [x] Live-reproduced the exact bug end-to-end against the real running
+      server first (5 days in London -> click "More outdoor activities"),
+      confirmed the crash, then reproduced the same flow again after the
+      fix: no "Load failed", the refined trip stayed correctly in London
+      (The National Gallery, St. Paul's Cathedral, Tower Bridge), and zero
+      console errors or failed network requests throughout
+
 ## Setup
 
 ```bash

@@ -40,6 +40,15 @@ def test_parse_rejects_none_like_falsy():
         parser.parse(None)  # type: ignore[arg-type]
 
 
+def test_parse_raises_value_error_when_llm_returns_no_destination(monkeypatch):
+    # Regression: _ParsedFields.destination became optional (needed for
+    # parse_partial()), so parse() must enforce it explicitly rather than
+    # relying on pydantic to reject a missing required field.
+    parser = _parser_with_result(monkeypatch, _ParsedFields())
+    with pytest.raises(ValueError, match="destination"):
+        parser.parse("more outdoor activities")
+
+
 # --- basic pass-through of fields ---------------------------------------
 
 
@@ -267,3 +276,48 @@ def test_parse_end_to_end_with_full_scenario(monkeypatch):
     assert result.travelers == 2
     assert result.trip_style == TripStyle.CITY
     assert result.interests == ["museums", "food"]
+
+
+# --- parse_partial (used by /refine) --------------------------------------
+
+
+def test_parse_partial_rejects_empty_string():
+    parser = PreferenceParser()
+    with pytest.raises(ValueError):
+        parser.parse_partial("")
+
+
+def test_parse_partial_does_not_require_a_destination(monkeypatch):
+    # The real bug this covers: a refinement like "more outdoor activities"
+    # gives the LLM nothing to infer a destination from, and it correctly
+    # leaves the field blank per its own system-prompt instructions. That
+    # used to make the underlying structured-output call itself raise a
+    # pydantic ValidationError (destination was a required field), an
+    # unhandled crash. parse_partial() must tolerate this and just return
+    # whatever else was found.
+    parser = _parser_with_result(monkeypatch, _ParsedFields(interests=["outdoor activities"]))
+    result = parser.parse_partial("more outdoor activities")
+    assert result["destination"] is None
+    assert result["interests"] == ["outdoor activities"]
+
+
+def test_parse_partial_returns_a_plain_json_safe_dict(monkeypatch):
+    fields = _minimal_fields(destination="Paris", start_date=date(2026, 7, 1))
+    parser = _parser_with_result(monkeypatch, fields)
+    result = parser.parse_partial("Paris in July")
+    assert isinstance(result, dict)
+    assert result["destination"] == "Paris"
+    assert result["start_date"] == "2026-07-01"  # JSON-safe, not a date object
+
+
+def test_parse_partial_uses_today_when_no_reference_date_given(monkeypatch):
+    captured = {}
+
+    def fake_invoke(text, reference_date):
+        captured["reference_date"] = reference_date
+        return _minimal_fields()
+
+    parser = PreferenceParser()
+    monkeypatch.setattr(parser, "_invoke", fake_invoke)
+    parser.parse_partial("less walking")
+    assert captured["reference_date"] == date.today()

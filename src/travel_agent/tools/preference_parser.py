@@ -1,6 +1,17 @@
 """PreferenceParser v1 — extracts structured TravelPreferences from natural language.
 
 Week 1 deliverable: 'I want to visit Paris for 5 days in July under $3000' -> TravelPreferences.
+
+Post-Week-16 addition: `parse_partial()`, for the `/refine` endpoint. A refinement
+like "more outdoor activities" mentions no destination at all, and `_ParsedFields.
+destination` used to be a required field — the LLM correctly left it out per its own
+system-prompt instructions ("never invent a destination... not stated"), which made
+the structured-output call itself raise a pydantic ValidationError deep inside
+LangChain, an unhandled 500 that the frontend surfaced as a bare "Load failed".
+`destination` is now optional on `_ParsedFields`; `parse()` (used for a brand-new
+`/plan` request, which must have a real destination) still enforces it explicitly,
+while `parse_partial()` (used for `/refine`, which only overlays whatever the LLM
+was confident about onto the existing session's preferences) does not.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ class _ParsedFields(BaseModel):
     """LLM-facing schema. Mirrors TravelPreferences minus fields we fill in ourselves."""
 
     origin: str | None = Field(default=None, description="Departure city or airport")
-    destination: str = Field(description="Primary destination city or region")
+    destination: str | None = Field(default=None, description="Primary destination city or region")
     start_date: date | None = None
     end_date: date | None = None
     duration_days: int | None = Field(default=None, ge=1, le=90)
@@ -79,4 +90,21 @@ class PreferenceParser:
 
         reference_date = reference_date or date.today()
         parsed = self._invoke(text, reference_date)
+        if not parsed.destination:
+            raise ValueError("Could not determine a destination from the request")
         return TravelPreferences(**parsed.model_dump(), raw_text=text)
+
+    def parse_partial(self, text: str, reference_date: date | None = None) -> dict:
+        """Parse a *partial* update from a refinement request (e.g. "less walking",
+        "more outdoor activities") — unlike `parse()`, does not require a destination,
+        since a refinement rarely restates the whole trip. Returns a raw field dict for
+        the caller to merge over the session's existing preferences; fields the LLM
+        wasn't confident enough to fill in come back as None/empty and should be
+        treated as "unchanged" by the caller.
+        """
+        if not text or not text.strip():
+            raise ValueError("text must be a non-empty travel request")
+
+        reference_date = reference_date or date.today()
+        parsed = self._invoke(text, reference_date)
+        return parsed.model_dump(mode="json")

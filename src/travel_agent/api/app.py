@@ -260,13 +260,31 @@ def create_app(
             raise HTTPException(status_code=404, detail="session not found")
         existing_prefs = graph.get_state(_config(body.session_id)).values.get("preferences") or {}
 
-        parsed = await asyncio.to_thread(parser.parse, body.raw_text)
+        # parse_partial(), not parse(): a refinement like "more outdoor activities"
+        # mentions no destination at all, and parse() requires one (correctly, for a
+        # brand-new /plan request). parse_partial() tolerates that and returns only
+        # what the LLM was confident about, to overlay onto the existing preferences
+        # below rather than replace them outright.
+        parsed = await asyncio.to_thread(parser.parse_partial, body.raw_text)
         updates = {
-            k: v
-            for k, v in parsed.model_dump(mode="json").items()
-            if k != "raw_text" and v not in (None, [], {}, "")
+            k: v for k, v in parsed.items() if k != "raw_text" and v not in (None, [], {}, "")
         }
         merged_preferences = {**existing_prefs, **updates, "raw_text": body.raw_text}
+        # Accumulating preference lists (interests, must-see, dietary, accessibility)
+        # merge by union instead of replace — a refinement chip like "more outdoor
+        # activities" should add to the trip's interests, not wipe out "art and
+        # museums" from the original request.
+        for list_field in (
+            "interests",
+            "must_see",
+            "dietary_restrictions",
+            "accessibility_needs",
+        ):
+            if list_field in updates:
+                existing_list = existing_prefs.get(list_field) or []
+                merged_preferences[list_field] = list(
+                    dict.fromkeys([*existing_list, *updates[list_field]])
+                )
 
         new_session_id = str(uuid.uuid4())
         session_store.create(new_session_id, body.raw_text, parent_session_id=body.session_id)
