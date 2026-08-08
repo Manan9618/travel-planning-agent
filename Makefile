@@ -50,7 +50,7 @@ pdf-test:
 	poetry run python scripts/pdf_generation_test.py
 
 serve:
-	poetry run uvicorn travel_agent.api.app:create_app --factory --reload
+	poetry run uvicorn travel_agent.api.app:create_app --factory --reload --app-dir src
 
 frontend-install:
 	cd frontend && npm install
