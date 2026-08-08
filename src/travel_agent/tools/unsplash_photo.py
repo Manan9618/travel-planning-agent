@@ -1,10 +1,14 @@
 """UnsplashPhotoTool — Week 14 deliverable: a destination cover photo for the
-PDF itinerary's cover page.
+PDF itinerary's cover page. Generalized post-Week-16 into `get_photo`, a
+lookup for an arbitrary search query, so `PDFGenerator` can also fetch a
+thumbnail per attraction (e.g. "Eiffel Tower Paris"), not just one cover
+photo for the whole trip.
 
-Entirely optional: without `UNSPLASH_ACCESS_KEY` set, or if the lookup fails
-for any reason (rate limit, no results, network error), `get_cover_photo`
-returns `None` and `PDFGenerator` falls back to a CSS gradient cover instead
-of leaving a broken image or blocking PDF generation on a third-party call.
+Entirely optional: without `UNSPLASH_ACCESS_KEY` set, or if a lookup fails
+for any reason (rate limit, no results, network error), the lookup returns
+`None` and callers fall back gracefully (a CSS gradient cover, or simply no
+thumbnail for that row) instead of leaving a broken image or blocking PDF
+generation on a third-party call.
 """
 
 from __future__ import annotations
@@ -31,14 +35,17 @@ class CoverPhoto:
 
 class UnsplashPhotoTool:
     def __init__(self, access_key: str | None = None, cache: Cache | None = None) -> None:
-        self._access_key = access_key or settings.unsplash_access_key
+        self._access_key = access_key if access_key is not None else settings.unsplash_access_key
         self._cache = cache or Cache()
 
     def get_cover_photo(self, destination: str) -> CoverPhoto | None:
+        return self.get_photo(f"{destination} travel landmark")
+
+    def get_photo(self, query: str, *, thumbnail: bool = False) -> CoverPhoto | None:
         if not self._access_key:
             return None
 
-        cache_key = f"unsplash:{destination.lower()}"
+        cache_key = f"unsplash:{'thumb:' if thumbnail else ''}{query.lower()}"
         if (cached := self._cache.get(cache_key)) is not None:
             return CoverPhoto(**cached) if cached else None
 
@@ -46,14 +53,14 @@ class UnsplashPhotoTool:
             body = get_json(
                 SEARCH_URL,
                 params={
-                    "query": f"{destination} travel landmark",
+                    "query": query,
                     "per_page": 1,
                     "orientation": "landscape",
                 },
                 headers={"Authorization": f"Client-ID {self._access_key}"},
             )
         except TransientError as exc:
-            logger.warning("Unsplash lookup failed for %s: %s", destination, exc)
+            logger.warning("Unsplash lookup failed for %r: %s", query, exc)
             return None
 
         results = body.get("results") or []
@@ -63,14 +70,15 @@ class UnsplashPhotoTool:
 
         try:
             photo = results[0]
-            cover = CoverPhoto(
-                url=photo["urls"]["regular"],
+            size = "thumb" if thumbnail else "regular"
+            found = CoverPhoto(
+                url=photo["urls"][size],
                 photographer_name=photo["user"]["name"],
                 photographer_url=photo["user"]["links"]["html"],
             )
         except (KeyError, TypeError) as exc:
-            logger.warning("Malformed Unsplash response for %s: %s", destination, exc)
+            logger.warning("Malformed Unsplash response for %r: %s", query, exc)
             return None
 
-        self._cache.set(cache_key, cover.__dict__, CACHE_TTL_SECONDS)
-        return cover
+        self._cache.set(cache_key, found.__dict__, CACHE_TTL_SECONDS)
+        return found

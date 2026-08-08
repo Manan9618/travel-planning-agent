@@ -20,12 +20,18 @@ class NoPhotoTool:
     def get_cover_photo(self, destination):
         return None
 
+    def get_photo(self, query, thumbnail=False):
+        return None
+
 
 class FakePhotoTool:
     def __init__(self, photo):
         self._photo = photo
 
     def get_cover_photo(self, destination):
+        return self._photo
+
+    def get_photo(self, query, thumbnail=False):
         return self._photo
 
 
@@ -183,6 +189,61 @@ def test_day_warnings_are_rendered():
     itinerary = _itinerary(days=[day])
     html = _generator().render_html(itinerary)
     assert "Pack rain gear" in html
+
+
+# --- per-attraction thumbnails -------------------------------------------------
+
+
+def test_attraction_row_shows_photo_thumbnail_when_available(monkeypatch):
+    photo = CoverPhoto(
+        url="https://images.unsplash.com/photo-eiffel",
+        photographer_name="Jane Doe",
+        photographer_url="https://unsplash.com/@jane",
+    )
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[_item("Eiffel Tower")])
+    itinerary = _itinerary(days=[day])
+    generator = _generator(photo=photo)
+    monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
+    html = generator.render_html(itinerary)
+    assert 'class="item-thumb" src="data:image/jpeg;base64,ZmFrZWJ5dGVz"' in html
+
+
+def test_attraction_row_has_no_thumbnail_without_a_photo():
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[_item("Eiffel Tower")])
+    itinerary = _itinerary(days=[day])
+    html = _generator(photo=None).render_html(itinerary)
+    assert '<img class="item-thumb"' not in html
+
+
+def test_non_attraction_rows_never_get_a_thumbnail(monkeypatch):
+    photo = CoverPhoto(url="https://x", photographer_name="Jane", photographer_url="https://x")
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[_item("Bistro", activity_type="restaurant", cost=30)],
+    )
+    itinerary = _itinerary(days=[day])
+    generator = _generator(photo=photo)
+    monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
+    html = generator.render_html(itinerary)
+    assert '<img class="item-thumb"' not in html
+
+
+def test_attraction_thumbnail_lookup_queries_title_and_destination():
+    seen_queries = []
+
+    class RecordingPhotoTool:
+        def get_cover_photo(self, destination):
+            return None
+
+        def get_photo(self, query, thumbnail=False):
+            seen_queries.append((query, thumbnail))
+            return None
+
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[_item("Eiffel Tower")])
+    itinerary = _itinerary(days=[day])
+    PDFGenerator(photo_tool=RecordingPhotoTool()).render_html(itinerary)
+    assert ("Eiffel Tower Paris", True) in seen_queries
 
 
 # --- map section -------------------------------------------------------------

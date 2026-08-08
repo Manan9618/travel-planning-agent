@@ -8,9 +8,15 @@ executive summary, one section per day (reusing Week 13's `day_color` so a
 day's PDF section and its map pins/routes share the same color), an embedded
 static map thumbnail (Week 13's `render_thumbnail_png`), a QR code linking to
 the interactive map (only rendered if a real URL is supplied — there's no
-hosted map until Week 15's FastAPI backend exists), and a styled budget
+hosted map until Week 15's FastAPI backend exists), a styled budget
 breakdown table (Week 8's `BudgetEvaluation` if available, else just the
-estimated total).
+estimated total), and (post-Week-16) a small Unsplash thumbnail next to each
+attraction row, MakeMyTrip-style — e.g. a real Eiffel Tower photo next to an
+"Eiffel Tower" item, not just the one destination-level cover photo. Scoped
+to `activity_type == "attraction"` only (not restaurants/hotels/transfers)
+to keep the extra Unsplash calls bounded; same graceful no-key/no-result
+fallback as the cover photo, so a row simply renders without a thumbnail
+rather than blocking or breaking the PDF.
 """
 
 from __future__ import annotations
@@ -65,6 +71,18 @@ section { page-break-inside: avoid; margin-bottom: 1.5em; }
 .status-over { color: #b02a2a; font-weight: bold; }
 .status-under { color: #2a7a2a; }
 .status-on_target { color: #226; }
+.item-row {
+  display: flex; align-items: center; gap: 0.6em; padding: 6px 0;
+  border-bottom: 1px solid #ddd;
+}
+.item-row:last-child { border-bottom: none; }
+.item-thumb {
+  width: 3.2cm; height: 2.2cm; object-fit: cover; border-radius: 4px; flex-shrink: 0;
+}
+.item-main { flex: 1; }
+.item-time { color: #888; font-size: 9pt; }
+.item-title { font-weight: bold; }
+.item-cost { text-align: right; font-weight: bold; white-space: nowrap; }
 """
 
 
@@ -97,7 +115,7 @@ class PDFGenerator:
             self._cover_page(itinerary),
             self._executive_summary(itinerary),
             self._map_section(map_thumbnail_path, map_url),
-            *[self._day_section(day) for day in itinerary.days],
+            *[self._day_section(day, itinerary.preferences.destination) for day in itinerary.days],
             self._budget_section(itinerary, budget_evaluation),
         ]
         return f"<html><head><style>{_CSS}</style></head><body>{''.join(sections)}</body></html>"
@@ -208,12 +226,10 @@ class PDFGenerator:
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    @staticmethod
-    def _day_section(day: DayPlan) -> str:
+    def _day_section(self, day: DayPlan, destination: str) -> str:
         color = day_color(day.day_number)
         if day.items:
-            items_html = "".join(PDFGenerator._item_row(i) for i in day.items)
-            items_html = f"<table>{items_html}</table>"
+            items_html = "".join(self._item_row(i, destination) for i in day.items)
         else:
             items_html = '<p class="empty">Free day &mdash; nothing scheduled</p>'
         warnings_html = ""
@@ -232,13 +248,28 @@ class PDFGenerator:
         </section>
         """
 
-    @staticmethod
-    def _item_row(item: ItineraryItem) -> str:
+    def _item_row(self, item: ItineraryItem, destination: str) -> str:
         cost = f"${item.cost:,.0f}" if item.cost else ""
-        return (
-            f"<tr><td>{item.start_time.time().strftime('%H:%M')}</td>"
-            f"<td>{item.title}</td><td>{item.activity_type}</td><td>{cost}</td></tr>"
-        )
+        thumb_html = ""
+        if item.activity_type == "attraction":
+            photo = self._photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
+            if photo:
+                image_b64 = self._download_as_base64(photo.url)
+                if image_b64:
+                    thumb_html = (
+                        f'<img class="item-thumb" src="data:image/jpeg;base64,{image_b64}"/>'
+                    )
+        time_str = item.start_time.time().strftime("%H:%M")
+        return f"""
+        <div class="item-row">
+          {thumb_html}
+          <div class="item-main">
+            <div class="item-time">{time_str} &middot; {item.activity_type}</div>
+            <div class="item-title">{item.title}</div>
+          </div>
+          <div class="item-cost">{cost}</div>
+        </div>
+        """
 
     @staticmethod
     def _budget_section(itinerary: Itinerary, budget_evaluation: BudgetEvaluation | None) -> str:

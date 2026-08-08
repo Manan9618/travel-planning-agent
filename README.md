@@ -347,9 +347,11 @@ Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phas
       (with photographer attribution, per Unsplash's API terms), falling back
       to a clean CSS gradient — and gracefully so, exactly like every other
       external-API tool in this project — when no key is set or the lookup/
-      download fails. No Unsplash key is configured yet; verified both code
-      paths directly (photo present vs. gradient fallback) since only the
-      fallback path runs in this environment today
+      download fails. No Unsplash key was configured yet at the time, so
+      both code paths were verified directly (photo present vs. gradient
+      fallback) since only the fallback path ran in this environment then —
+      a real key was added post-Week-16 (see below), now exercising the
+      photo path live too
 - [x] Day sections reuse Week 13's `day_color()` so a day's PDF badge and its
       map pins/routes share the same color across both artifacts
 - [x] Map section embeds a real Week 13 `render_thumbnail_png()` screenshot
@@ -545,6 +547,43 @@ original single-column chat-with-inline-itinerary-card design.
       generated PDF rendering inline), confirmed dark mode and the mobile
       chat/canvas toggle at a 390px viewport, and confirmed **zero console
       errors and zero failed network requests** throughout both passes
+
+**Post-Week-16 — Per-attraction PDF photos** (MakeMyTrip-style visual
+itinerary): Week 14's PDF only ever showed one destination-level cover photo.
+Generalized the same `UnsplashPhotoTool` to fetch a real photo per attraction
+too — an actual Eiffel Tower photo next to an "Eiffel Tower" row, not just a
+generic Paris photo on the cover.
+
+- [x] New `UnsplashPhotoTool.get_photo(query, thumbnail=False)` — a
+      general-purpose lookup for any search string, with a separate cache
+      entry per (query, size) pair. `get_cover_photo(destination)` is now a
+      thin wrapper (`get_photo(f"{destination} travel landmark")`) so Week
+      14's cover-photo behavior and caching are unchanged
+- [x] `PDFGenerator` fetches a small `thumbnail=True` Unsplash photo for
+      every `activity_type == "attraction"` item, keyed on `"{title}
+      {destination}"` (e.g. "Eiffel Tower Paris") for precision, and embeds
+      it as a base64 thumbnail next to that day's row — restaurants, hotel,
+      and transfer rows are intentionally skipped to keep the extra API
+      calls bounded. Same graceful no-key/no-result/download-failure
+      fallback as the cover photo: a row simply renders without a thumbnail
+      rather than breaking the PDF
+- [x] Found and fixed a real bug while wiring this up:
+      `UnsplashPhotoTool.__init__` did `access_key or settings.unsplash_access_key`,
+      so an explicitly-passed empty string silently fell back to the global
+      configured key instead of meaning "no key" — harmless while no key was
+      configured, but broke the "no key configured" test the moment a real
+      `UNSPLASH_ACCESS_KEY` was added to `.env`. Fixed with an explicit
+      `is not None` check
+- [x] 9 new tests (5 for `get_photo`'s query/size/caching behavior, 4 for
+      attraction-row thumbnails: present when available, absent without a
+      key, never rendered for non-attraction rows, and the exact query sent)
+      bringing backend tests to 512
+- [x] Live-tested against the real Unsplash API with a 2-day Paris
+      itinerary (Eiffel Tower, Louvre Museum, Notre-Dame Cathedral, Arc de
+      Triomphe as attractions, a restaurant thrown in): rendered the PDF,
+      extracted the embedded images with `pypdf`, and visually confirmed
+      each thumbnail is a real, correctly-matched photo of that exact
+      landmark — the restaurant row correctly has no thumbnail
 
 ## Setup
 

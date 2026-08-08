@@ -7,12 +7,15 @@ SEARCH_URL = "https://api.unsplash.com/search/photos"
 
 
 def _photo_body(
-    url="https://images.unsplash.com/photo-1", name="Jane Doe", profile="https://unsplash.com/@jane"
+    url="https://images.unsplash.com/photo-1",
+    thumb_url="https://images.unsplash.com/photo-1-thumb",
+    name="Jane Doe",
+    profile="https://unsplash.com/@jane",
 ):
     return {
         "results": [
             {
-                "urls": {"regular": url},
+                "urls": {"regular": url, "thumb": thumb_url},
                 "user": {"name": name, "links": {"html": profile}},
             }
         ]
@@ -99,3 +102,42 @@ def test_empty_result_is_also_cached_as_none(fake_cache):
     assert tool.get_cover_photo("Nowhereville") is None
     assert tool.get_cover_photo("Nowhereville") is None
     assert len(responses.calls) == 1
+
+
+# --- get_photo (generalized per-query lookup, e.g. per-attraction) -------
+
+
+@responses.activate
+def test_get_photo_sends_the_raw_query_unmodified(fake_cache):
+    responses.add(responses.GET, SEARCH_URL, json=_photo_body(), status=200)
+    _tool(fake_cache).get_photo("Eiffel Tower Paris")
+    assert responses.calls[0].request.params["query"] == "Eiffel Tower Paris"
+
+
+@responses.activate
+def test_get_photo_returns_regular_size_by_default(fake_cache):
+    responses.add(responses.GET, SEARCH_URL, json=_photo_body(), status=200)
+    photo = _tool(fake_cache).get_photo("Eiffel Tower Paris")
+    assert photo.url == "https://images.unsplash.com/photo-1"
+
+
+@responses.activate
+def test_get_photo_returns_thumb_size_when_requested(fake_cache):
+    responses.add(responses.GET, SEARCH_URL, json=_photo_body(), status=200)
+    photo = _tool(fake_cache).get_photo("Eiffel Tower Paris", thumbnail=True)
+    assert photo.url == "https://images.unsplash.com/photo-1-thumb"
+
+
+@responses.activate
+def test_get_photo_regular_and_thumb_are_cached_separately(fake_cache):
+    responses.add(responses.GET, SEARCH_URL, json=_photo_body(), status=200)
+    tool = _tool(fake_cache)
+    tool.get_photo("Eiffel Tower Paris")
+    tool.get_photo("Eiffel Tower Paris", thumbnail=True)
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_get_photo_without_access_key_returns_none(fake_cache):
+    tool = UnsplashPhotoTool(access_key="", cache=fake_cache)
+    assert tool.get_photo("Eiffel Tower Paris") is None
