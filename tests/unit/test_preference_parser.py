@@ -164,6 +164,28 @@ def test_parse_pace_defaults_to_moderate(monkeypatch):
     assert result.pace == Pace.MODERATE
 
 
+def test_parse_passes_through_travelers_when_unspecified_still_defaults_to_one(monkeypatch):
+    # Regression: _ParsedFields.travelers used to default to 1 (a concrete
+    # value, not None), so parse() had to keep working even once travelers
+    # is genuinely absent from the LLM's structured output.
+    parser = _parser_with_result(monkeypatch, _minimal_fields())
+    result = parser.parse("Paris trip")
+    assert result.travelers == 1
+
+
+def test_parsed_fields_travelers_budget_currency_pace_default_to_none():
+    # Regression (Week 21): these three used to default to a concrete value
+    # (1/"USD"/MODERATE) on _ParsedFields itself, making parse_partial()'s
+    # output indistinguishable between "the LLM said this" and "the LLM
+    # found nothing, the default filled in" - which meant /refine's
+    # updates filter could never exclude them, silently resetting all
+    # three on every single refinement regardless of what it was about.
+    fields = _minimal_fields()
+    assert fields.travelers is None
+    assert fields.budget_currency is None
+    assert fields.pace is None
+
+
 def test_parse_passes_through_interests(monkeypatch):
     fields = _minimal_fields(interests=["art", "food"])
     parser = _parser_with_result(monkeypatch, fields)

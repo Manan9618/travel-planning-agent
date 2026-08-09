@@ -8,16 +8,18 @@ Exposes the LangGraph planning pipeline (Weeks 1-14) over HTTP + WebSocket:
 - `POST /plan/{session_id}/resume` continues a run paused at Week 6's
   human-in-the-loop conflict-review step.
 - `POST /refine` starts a NEW session seeded from the old one's preferences
-  merged with a refinement request — a full re-plan under a fresh
-  `session_id` rather than an in-place edit. This sidesteps a real
-  LangGraph gotcha: `PlanningState.completed_steps` uses an additive
-  (`operator.add`) reducer, so feeding a shorter `completed_steps` list into
-  an *existing* thread_id would concatenate rather than reset it, silently
-  making the supervisor think old steps are still done. A fresh thread_id
-  has no accumulated state to fight with. Real incremental multi-turn
-  refinement (editing just the affected steps) is Week 21's job — this is
-  honest, correct infrastructure for it to build on, not the sophisticated
-  version yet.
+  merged with a refinement request, still under a fresh `session_id` (this
+  sidesteps a real LangGraph gotcha: `PlanningState.completed_steps` uses
+  an additive `operator.add` reducer, so feeding a shorter list into an
+  *existing* thread_id would concatenate rather than reset it) — but as of
+  Week 21, it's an incremental edit, not a full re-plan: only the search
+  steps whose actual inputs changed (see `agents/refinement.py`) run for
+  real; every other already-completed search result is carried over into
+  the new thread's seed state as-is, so a refinement that doesn't touch
+  origin/destination/dates/travelers/budget/interests skips flights,
+  hotels, attractions, restaurants, and weather entirely — no re-hitting
+  those external, often rate-limited APIs for a change they have nothing
+  to do with. Itinerary assembly onward always reruns.
 - `GET /export/{session_id}/pdf` and `/map` serve Week 14/13's generated
   artifacts.
 - `WS /ws/{session_id}` streams step-progress events plus a genuine
@@ -62,6 +64,7 @@ from travel_agent.agents.graph import (
     build_postgres_checkpointer,
     build_sqlite_checkpointer,
 )
+from travel_agent.agents.refinement import SEARCH_STEP_STATE_FIELD, build_refinement_seed
 from travel_agent.api.schemas import (
     PlanRequest,
     PlanResponse,
@@ -332,7 +335,8 @@ def create_app(
     async def refine(request: Request, body: RefineRequest) -> PlanResponse:
         if session_store.get(body.session_id) is None:
             raise HTTPException(status_code=404, detail="session not found")
-        existing_prefs = graph.get_state(_config(body.session_id)).values.get("preferences") or {}
+        existing_state = graph.get_state(_config(body.session_id)).values or {}
+        existing_prefs = existing_state.get("preferences") or {}
 
         # parse_partial(), not parse(): a refinement like "more outdoor activities"
         # mentions no destination at all, and parse() requires one (correctly, for a
@@ -362,17 +366,12 @@ def create_app(
 
         new_session_id = str(uuid.uuid4())
         session_store.create(new_session_id, body.raw_text, parent_session_id=body.session_id)
-        asyncio.create_task(
-            _drive_graph(
-                new_session_id,
-                {
-                    "raw_text": body.raw_text,
-                    "preferences": merged_preferences,
-                    "errors": [],
-                    "completed_steps": ["parse_preferences"],
-                },
-            )
-        )
+        seed = build_refinement_seed(body.raw_text, merged_preferences, existing_state, updates)
+        reused = [
+            step.value for step in SEARCH_STEP_STATE_FIELD if step.value in seed["completed_steps"]
+        ]
+        session_store.append_event(new_session_id, "refinement_seeded", {"reused_steps": reused})
+        asyncio.create_task(_drive_graph(new_session_id, seed))
         return PlanResponse(session_id=new_session_id, status="running")
 
     @app.get("/export/{session_id}/pdf", dependencies=[Depends(verify_api_key)])

@@ -57,6 +57,11 @@ export function usePlanningProgress(
         switch (data.type) {
           case 'step_completed':
             return { ...p, completedSteps: [...p.completedSteps, data.step] }
+          case 'refinement_seeded':
+            // Reused steps (Week 21) never get their own step_completed
+            // event — the graph skips calling them entirely — so this is
+            // the only signal the UI gets that they're already done.
+            return { ...p, completedSteps: [...p.completedSteps, ...data.reused_steps] }
           case 'narration_token':
             return { ...p, narration: p.narration + data.token }
           case 'awaiting_review':

@@ -211,6 +211,16 @@ export interface AwaitingReviewEvent {
   next: string[]
 }
 
+// Week 21: fired once, right when a /refine session is seeded, before the
+// graph even starts running. `reused_steps` are search-phase steps carried
+// over from the parent session's results (see agents/refinement.py) — the
+// graph skips them entirely, so they never get their own step_completed
+// event; the UI needs this one instead to show them as already done.
+export interface RefinementSeededEvent {
+  type: 'refinement_seeded'
+  reused_steps: string[]
+}
+
 export interface DoneEvent {
   type: 'done'
 }
@@ -224,5 +234,6 @@ export type WsEvent =
   | StepCompletedEvent
   | NarrationTokenEvent
   | AwaitingReviewEvent
+  | RefinementSeededEvent
   | DoneEvent
   | ErrorEvent

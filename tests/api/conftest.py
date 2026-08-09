@@ -195,7 +195,14 @@ class FakeNarrator:
             yield token
 
 
-def build_stub_graph(parser=None):
+def build_stub_graph(
+    parser=None,
+    flight_tool=None,
+    hotel_tool=None,
+    attraction_tool=None,
+    restaurant_tool=None,
+    weather_tool=None,
+):
     # MemorySaver, not SqliteSaver: these tests run many full graph
     # invocations back-to-back, and that density reliably surfaced a real
     # upstream race in SqliteSaver's internal background-write thread pool
@@ -206,11 +213,11 @@ def build_stub_graph(parser=None):
     # persistent one `create_app()`'s production default uses.
     return build_planning_graph(
         parser=parser or StubParser(),
-        flight_tool=StubFlightTool(),
-        hotel_tool=StubHotelTool(),
-        attraction_tool=StubAttractionTool(),
-        restaurant_tool=StubRestaurantTool(),
-        weather_tool=StubWeatherTool(),
+        flight_tool=flight_tool or StubFlightTool(),
+        hotel_tool=hotel_tool or StubHotelTool(),
+        attraction_tool=attraction_tool or StubAttractionTool(),
+        restaurant_tool=restaurant_tool or StubRestaurantTool(),
+        weather_tool=weather_tool or StubWeatherTool(),
         itinerary_builder=MultiDayOptimizer(
             travel_time_estimator=FixedTravelTime(), distance_matrix_tool=FixedDistanceMatrix()
         ),
@@ -228,11 +235,12 @@ def build_stub_graph(parser=None):
 @pytest.fixture
 def app_factory():
     """A callable that builds a fresh, fully-isolated app per call, so tests
-    that need custom parser/narrator behavior aren't stuck with fixture
-    defaults."""
+    that need custom parser/narrator/search-tool behavior aren't stuck with
+    fixture defaults (e.g. Week 21's incremental-refinement tests, which need
+    to count how many times each search tool was actually called)."""
 
-    def _make(parser=None, narrator=None):
-        graph = build_stub_graph(parser=parser)
+    def _make(parser=None, narrator=None, **tool_overrides):
+        graph = build_stub_graph(parser=parser, **tool_overrides)
         return create_app(
             graph=graph,
             session_store=SessionStore(":memory:"),

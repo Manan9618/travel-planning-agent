@@ -1116,6 +1116,87 @@ activities", landing on nonsense results).
       586 backend tests passing (11 skip without local Postgres, matching
       Weeks 18-19)
 
+**Phase 6, Week 21 — Incremental Multi-Turn Refinement** — done
+
+- [x] **`/refine` is now an incremental edit, not a full re-plan**
+      (`agents/refinement.py`). Week 15's version always re-ran every
+      search tool under a fresh `session_id`/thread_id — a deliberate
+      choice to sidestep a real LangGraph gotcha (`completed_steps` uses
+      an additive `operator.add` reducer, so feeding a shorter list into
+      an *existing* thread_id would concatenate rather than reset it).
+      That choice is unchanged — a refinement still gets a fresh
+      thread_id — but the SEED state for that fresh thread is now
+      selective: `invalidated_search_steps(updates)` maps each preference
+      field the refinement actually touched to the search tool(s) it
+      parameterizes (`destination` invalidates all 5; `origin` only
+      `search_flights`; `interests` only `find_attractions`; `travelers`
+      only `search_hotels`; `start_date`/`end_date`/`duration_days`
+      invalidate flights/hotels/weather; everything else — must_see,
+      dietary_restrictions, trip_style, pace, priority_weights — affects
+      only itinerary assembly, which always reruns, so it invalidates no
+      search step at all). Every search step that already completed and
+      isn't invalidated is pre-seeded as complete with its previous
+      result copied over; the graph skips straight past it and only calls
+      the tool for whatever's actually left
+- [x] A step that never completed in the parent session (e.g.
+      `search_flights`, because no origin was known yet) is never seeded
+      as complete regardless of what changed — a refinement that finally
+      supplies the missing input still runs it for real, not silently as
+      an empty result
+- [x] **Found and fixed a real, more serious pre-existing bug live-testing
+      this**: `_ParsedFields.travelers`/`budget_currency`/`pace` defaulted
+      to concrete values (`1`/`"USD"`/`"moderate"`), not `None`, unlike
+      every other optional field on the schema. That meant
+      `parse_partial()`'s output could never distinguish "the LLM found
+      this" from "the LLM found nothing, the default filled in" — so
+      `/refine`'s existing `updates` filter (`v not in (None, [], {},
+      "")`) could never exclude them, and **every single refinement
+      silently reset travelers to 1, currency to USD, and pace to
+      moderate** in the merged preferences, even for a refinement chip
+      like "add a museum visit" that has nothing to do with any of them.
+      This bug predates Week 21 (the filter logic is unchanged from Week
+      15) but was invisible until this week's per-field invalidation
+      mapping made its symptom visible as a spurious `search_hotels`
+      re-run on every refinement (keyed on `travelers`) — caught live,
+      not by the existing test suite, because every stub parser used in
+      tests returns a plain dict without replicating this specific
+      default-value quirk of the real `_ParsedFields` schema. Fixed by
+      making those three fields default to `None` like the rest;
+      `PreferenceParser.parse()` now drops `None` values before
+      constructing `TravelPreferences` so `parse()`'s own behavior for a
+      brand-new `/plan` request is unchanged (`TravelPreferences`'s own
+      defaults apply identically either way) — only `parse_partial()`'s
+      output changed, to correctly report "not mentioned" as `None`
+- [x] **Live-tested against the real backend and real APIs**, not stubs:
+      planned a real 5-day Kyoto trip with `travelers=2`, confirmed via
+      `/metrics` that `search_flights`/`search_hotels`/`find_attractions`/
+      `find_restaurants`/`check_weather` each fired once; refined with
+      "I am also interested in temples and gardens" and confirmed (a)
+      `find_attractions` fired a second time and every other search step's
+      call count stayed unchanged, and (b) `travelers` was still `2`,
+      `budget_currency` still `"USD"` — proof the bug above is genuinely
+      fixed, not just passing in tests
+- [x] **Frontend**: a new `refinement_seeded` WebSocket event (fired once,
+      right when a refinement's seed state is built, before the graph
+      starts) carries the list of reused steps — without it, the step
+      checklist (`StepProgress.tsx`) would show a reused step as
+      perpetually "not started" (it never gets its own `step_completed`
+      event, since the graph never calls it), which would have been a
+      real, visible regression from Week 21's own change. `usePlanningProgress`
+      folds `reused_steps` into `completedSteps` immediately on receipt.
+      Live-tested in a real browser against the real dev server: no
+      console errors, the checklist correctly showed reused steps checked
+      off within the first second after sending a refinement
+- [x] 25 new/updated tests: `test_refinement.py` (17, pure logic — field
+      -> invalidated-step mapping, seed construction, the "never fabricate
+      a completion that didn't happen" case); `test_refine_endpoint.py`
+      additions (4, using call-counting tool doubles to prove unaffected
+      search tools are never invoked); `test_preference_parser.py`
+      additions (2, the `travelers`/`budget_currency`/`pace` regression);
+      `frontend/src/lib/useWebSocket.test.ts` (3, new file — this hook had
+      no prior test coverage at all). 609 backend tests passing (11 skip
+      without local Postgres); 70 frontend tests passing
+
 ## Setup
 
 ```bash

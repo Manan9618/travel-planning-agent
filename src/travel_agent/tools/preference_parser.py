@@ -53,12 +53,24 @@ class _ParsedFields(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     duration_days: int | None = Field(default=None, ge=1, le=90)
-    travelers: int = Field(default=1, ge=1, le=20)
+    # travelers/budget_currency/pace default to None here, NOT TravelPreferences's
+    # real defaults (1/"USD"/MODERATE) - Week 21 fix for a real bug found
+    # live-testing incremental refinement: with a concrete non-None default, these
+    # three fields were indistinguishable in parse_partial()'s output between "the
+    # LLM found this" and "the LLM found nothing, the default filled in", so
+    # /refine's `updates` filter (`v not in (None, [], {}, "")`) could never
+    # exclude them - every single refinement silently reset travelers to 1,
+    # budget_currency to "USD", and pace to "moderate" in the merged preferences,
+    # even when the refinement had nothing to do with any of them (and, once Week
+    # 21 added invalidation-by-changed-field, spuriously re-ran search_hotels on
+    # every refinement too, since it's keyed on "travelers"). parse() below
+    # applies TravelPreferences's real defaults itself when these come back None.
+    travelers: int | None = Field(default=None, ge=1, le=20)
     budget_total: float | None = Field(default=None, ge=0)
-    budget_currency: str = Field(default="USD")
+    budget_currency: str | None = Field(default=None)
     budget_tier: BudgetTier | None = None
     trip_style: TripStyle | None = None
-    pace: Pace = Field(default=Pace.MODERATE)
+    pace: Pace | None = Field(default=None)
     interests: list[str] = Field(default_factory=list)
     must_see: list[str] = Field(default_factory=list)
     dietary_restrictions: list[str] = Field(default_factory=list)
@@ -157,7 +169,13 @@ class PreferenceParser:
         parsed = self._invoke(text, reference_date)
         if not parsed.destination:
             raise ValueError("Could not determine a destination from the request")
-        return TravelPreferences(**parsed.model_dump(), raw_text=text)
+        # Drop None values (travelers/budget_currency/pace when the LLM found no
+        # signal for them - see _ParsedFields's docstring comment) so
+        # TravelPreferences's OWN defaults (1/"USD"/MODERATE) apply, same as
+        # always omitting the key would - `_ParsedFields` no longer carries
+        # those defaults itself.
+        fields = {k: v for k, v in parsed.model_dump().items() if v is not None}
+        return TravelPreferences(**fields, raw_text=text)
 
     def parse_partial(self, text: str, reference_date: date | None = None) -> dict:
         """Parse a *partial* update from a refinement request (e.g. "less walking",
