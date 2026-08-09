@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -223,8 +224,9 @@ def test_parse_uses_explicit_reference_date(monkeypatch):
 def test_invoke_retries_on_transient_failure_then_succeeds(monkeypatch):
     parser = PreferenceParser()
     good_result = _minimal_fields()
+    good_response = {"raw": SimpleNamespace(usage_metadata=None), "parsed": good_result}
     mock_llm = MagicMock()
-    mock_llm.invoke.side_effect = [RuntimeError("timeout"), RuntimeError("timeout"), good_result]
+    mock_llm.invoke.side_effect = [RuntimeError("timeout"), RuntimeError("timeout"), good_response]
     monkeypatch.setattr(parser, "_llm", mock_llm)
 
     result = parser._invoke("Paris trip", date.today())

@@ -898,6 +898,110 @@ activities", landing on nonsense results).
       real connection needed); 543 backend tests passing (11 skip without
       a local Postgres, all 13 run for real in CI)
 
+**Phase 5, Week 19 — Monitoring, Logging & Observability** — done
+
+- [x] **Structured logging** (`observability/logging.py`, structlog wrapping
+      stdlib `logging`): `configure_logging()` reconfigures the ROOT
+      logger's formatting once at `create_app()` startup — none of the ~15
+      existing `logger = logging.getLogger(__name__)` call sites across
+      this project's tools/nodes needed touching, since structlog's stdlib
+      integration formats whatever they already log. Console (colorized)
+      for local dev, JSON for Docker/CI (`LOG_FORMAT`); uvicorn's own
+      loggers are routed through the same formatter so access logs and
+      app logs look consistent
+- [x] **Correlation IDs**: `bind_request_context`/`clear_request_context`
+      bind values into `contextvars`, folded into every log line while
+      bound. Two scopes — `request_id` for the lifetime of one HTTP
+      request/response (middleware), `session_id` for the lifetime of a
+      whole background planning run in `_drive_graph` (outlives the
+      original request by however long planning takes). Live-verified
+      this genuinely propagates through `asyncio.to_thread`'s worker
+      thread into third-party libraries' own logging, not just this
+      project's code: a real run's logs showed `session_id=...` on
+      `httpx`'s OpenAI request logs and even WeasyPrint's internal
+      PDF-rendering progress log lines
+- [x] **Prometheus metrics** (`observability/metrics.py`, `GET /metrics`):
+      `instrument_node` wraps every LangGraph worker-step node with
+      call-count (by step + success/error, reusing the `errors` list every
+      node already returns) and duration tracking, applied once at
+      registration time in `graph.py` rather than inside each of the ~12
+      node factories in `nodes.py` — instrumenting a new step never means
+      touching its own function. `planning_duration_seconds` covers a full
+      `/plan` run; `budget_adherence_score` records `optimize_budget`'s
+      real adherence score as a histogram
+- [x] **LLM cost tracking**: `record_llm_usage` is called from all 4 real
+      LLM call sites (`PreferenceParser`, `AttractionDescriberTool`,
+      `ItineraryJudge`, `ItineraryNarrator`) with LangChain's standardized
+      `usage_metadata`. Found a real obstacle getting this working: 3 of
+      the 4 sites use `.with_structured_output(...)`, which by default
+      returns only the parsed schema instance and silently discards the
+      raw `AIMessage` — and with it, `usage_metadata`. Added
+      `include_raw=True` to all three (`{"raw", "parsed",
+      "parsing_error"}` instead of just the parsed value), which also
+      stops raising on a parse failure — restored the original
+      raise-on-failure behavior tenacity's `@retry` here depends on with
+      an explicit `if not isinstance(parsed, Schema): raise`. The 4th
+      site (`ItineraryNarrator`) streams via `.astream()`; `usage_metadata`
+      only lands on a later chunk than the content itself, so its tokens
+      are accumulated via `AIMessageChunk.__add__` across the whole stream
+      (`stream_usage=True`) rather than read off one chunk. Cost is a
+      documented-approximate estimate from a small hardcoded per-model
+      pricing table (OpenAI's own invoice is the source of billing truth)
+- [x] Live-verified end-to-end against the real running backend: a real
+      3-day Berlin trip produced real entries at `/metrics` for every one
+      of the 11 planning steps, `planning_duration_seconds`,
+      `budget_adherence_score`, and **894 real input + 316 real output
+      GPT-4o tokens (~$0.0054 estimated)** — not synthetic test data
+- [x] **Sentry** (`observability/sentry.py`): `init_sentry()` is a no-op
+      without `SENTRY_DSN`, the same optional-credential pattern as every
+      other integration in this project. `LoggingIntegration` additionally
+      captures any ERROR-level log line as a Sentry event, not just
+      unhandled exceptions — most failures in this codebase are
+      deliberately caught and logged (every node in `nodes.py`, by
+      design), so relying on Sentry's default unhandled-exception capture
+      alone would miss almost everything worth knowing about
+- [x] **LangSmith**: no application code at all — LangChain/LangGraph read
+      `LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY`/`LANGCHAIN_PROJECT`
+      directly from the environment, already populated by `config.py`'s
+      `load_dotenv()`. `settings.langsmith_enabled` exists only for the
+      startup log line summarizing what's active; no LangSmith account is
+      connected to this project, so live trace visualization is
+      config-ready but unverified, the same "prepared, not executed"
+      status as Week 18's Railway/Render deploy config
+- [x] **Prometheus + Grafana**, added to `docker-compose.yml` and fully
+      live-tested (this machine had neither installed — same "install the
+      real thing rather than write untested config" approach Week 18
+      used for Docker/Postgres): a real `docker-compose up` scrape of the
+      real backend's `/metrics`, a Grafana dashboard
+      (`observability/grafana/`, 8 panels — step call rate, error rate,
+      full-run/per-step duration percentiles, budget adherence heatmap,
+      token rate, total cost, run throughput) auto-provisioned via
+      Grafana's datasource/dashboard-as-code, confirmed rendering real
+      data from a real planning run through Grafana's own API and a real
+      browser screenshot. Found and fixed a real bug getting there: two
+      overlapping Docker volume mounts (the whole `provisioning/` tree
+      read-only, then a second mount nested inside it for the dashboard
+      JSON) crashed the container outright — Docker can't create a
+      mountpoint inside an already-read-only parent mount. Fixed by
+      moving the dashboard JSON inside the `provisioning/` tree itself so
+      one mount covers everything
+- [x] Found and fixed a real bug while wiring the startup summary log
+      line: `logger.info("...", langsmith=..., sentry=...)` used
+      structlog's keyword-argument style on a plain stdlib `Logger`
+      (`logging.getLogger(__name__)`, this file's existing convention) —
+      stdlib `Logger.info()` doesn't accept arbitrary kwargs and would
+      have raised `TypeError` on every single app startup. Caught by
+      actually starting the app, not by the test suite (nothing exercises
+      `create_app()`'s literal startup log line's arguments) — fixed with
+      plain `%s` formatting instead, consistent with every other log call
+      in this codebase
+- [x] 20 new backend tests (`test_metrics.py`, `test_observability_
+      logging.py`, `test_sentry.py`) — metrics tests assert on the
+      *delta* a call produces (module-level Prometheus objects are
+      process-wide singletons, so absolute values aren't test-isolated)
+      rather than absolute values; 564 backend tests passing (11 skip
+      without local Postgres, matching Week 18)
+
 ## Setup
 
 ```bash
@@ -916,15 +1020,17 @@ make serve            # FastAPI on :8000
 make frontend-dev     # Vite dev server on :5173
 ```
 
-### Docker (Week 18)
+### Docker (Weeks 18-19)
 
-The whole stack — backend, frontend, Postgres, Redis — in one command,
-using the same `.env` as above:
+The whole stack — backend, frontend, Postgres, Redis, Prometheus, Grafana
+— in one command, using the same `.env` as above:
 
 ```bash
 docker-compose up --build
-# backend  -> http://localhost:8000
-# frontend -> http://localhost:8080
+# backend    -> http://localhost:8000  (/metrics for raw Prometheus output)
+# frontend   -> http://localhost:8080
+# prometheus -> http://localhost:9090
+# grafana    -> http://localhost:3000  (anonymous viewer access, no login)
 ```
 
 Plain `make serve`/`make frontend-dev` above need no Docker and use local
@@ -941,6 +1047,7 @@ src/travel_agent/
   tools/               # one module per agent tool (PreferenceParser, FlightSearchTool, ...)
   agents/              # LangGraph agent/graph definitions (added Week 4+)
   api/                 # FastAPI app, schemas, session store (added Week 15)
+  observability/       # structured logging, Prometheus metrics, Sentry (added Week 19)
   utils/
 tests/
   unit/
@@ -953,8 +1060,9 @@ frontend/               # React 18 + TypeScript + Vite chat UI (added Week 16)
     lib/                # API client, WebSocket hook, theme hook
     types/               # hand-written TS mirror of the API's Pydantic schemas
   Dockerfile             # multi-stage: node build -> nginx (added Week 18)
+observability/           # Prometheus scrape config + Grafana provisioning (added Week 19)
 Dockerfile               # multi-stage: poetry build -> slim runtime (added Week 18)
-docker-compose.yml        # backend + frontend + postgres + redis (added Week 18)
+docker-compose.yml        # backend+frontend+postgres+redis+prometheus+grafana (Week 18-19)
 render.yaml               # Render deploy blueprint, prepared not deployed (added Week 18)
 .github/workflows/ci.yml  # lint -> test -> build -> push (added Week 18)
 ```
@@ -964,4 +1072,5 @@ render.yaml               # Render deploy blueprint, prepared not deployed (adde
 Python 3.11+ (pinned to 3.11.14 via `.python-version`), LangGraph + LangChain, OpenAI GPT-4o,
 FastAPI + uvicorn + WebSockets, slowapi, PostgreSQL + Redis, Docker + Docker Compose,
 GitHub Actions, pytest + pytest-playwright + locust + mutmut, Folium, Playwright, WeasyPrint,
-qrcode. React 18 + TypeScript + Vite + Tailwind CSS 4 + react-leaflet, Vitest + Testing Library.
+qrcode, structlog, prometheus-client + Grafana, sentry-sdk, LangSmith (via LangChain).
+React 18 + TypeScript + Vite + Tailwind CSS 4 + react-leaflet, Vitest + Testing Library.

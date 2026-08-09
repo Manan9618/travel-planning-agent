@@ -35,6 +35,9 @@ psycopg = {version = "^3.3.4", extras = ["binary"]}
 # gracefully, not a crash, but a real regression from documented Week 13/14
 # behavior). pytest-playwright (E2E-suite-only) correctly stays in dev deps.
 playwright = "^1.62.0"
+structlog = "^26.1.0"
+prometheus-client = "^0.26.0"
+sentry-sdk = "^2.66.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

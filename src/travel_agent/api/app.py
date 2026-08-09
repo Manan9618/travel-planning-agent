@@ -43,14 +43,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -70,6 +72,13 @@ from travel_agent.api.schemas import (
 from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
 from travel_agent.config import settings
 from travel_agent.models.core import Itinerary
+from travel_agent.observability.logging import (
+    bind_request_context,
+    clear_request_context,
+    configure_logging,
+)
+from travel_agent.observability.metrics import PLANNING_DURATION
+from travel_agent.observability.sentry import init_sentry
 from travel_agent.tools.itinerary_narrator import ItineraryNarrator
 from travel_agent.tools.preference_parser import PreferenceParser
 
@@ -93,6 +102,26 @@ def create_app(
     narrator: ItineraryNarrator | None = None,
     parser: PreferenceParser | None = None,
 ) -> FastAPI:
+    # Called here, not at module import time, for the same reason
+    # build_planning_graph()/SessionStore() aren't module-level singletons
+    # (see the module docstring): a bare `import travel_agent.api.app`
+    # (e.g. during test collection) shouldn't have side effects -
+    # configure_logging is idempotent (a no-op past the first real call)
+    # and init_sentry is a no-op without SENTRY_DSN, so calling both once
+    # per create_app() is cheap and safe even across many test-suite calls.
+    configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
+    init_sentry(settings.sentry_dsn)
+    # LangSmith needs no wiring here at all - LangChain/LangGraph read
+    # LANGCHAIN_TRACING_V2/LANGCHAIN_API_KEY/LANGCHAIN_PROJECT straight out
+    # of the environment (already populated by config.py's load_dotenv()).
+    # This line only makes what's active visible at a glance in the logs.
+    logger.info(
+        "observability configured: langsmith=%s sentry=%s database=%s",
+        settings.langsmith_enabled,
+        bool(settings.sentry_dsn),
+        "postgres" if settings.database_url else "sqlite",
+    )
+
     # Postgres (Week 18's Docker Compose) when DATABASE_URL is set, SQLite
     # otherwise (plain `make serve`, unchanged from Weeks 4/15) - both the
     # checkpointer and the session store switch together, the same
@@ -123,6 +152,25 @@ def create_app(
         session_store  # exposed for tests to drain background work on teardown
     )
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):
+        # Correlation ID (Week 19) for every request's own logs - separate
+        # from _drive_graph's session_id binding below, which covers a
+        # background planning run that outlives this request/response cycle
+        # entirely (POST /plan returns 202 long before the graph finishes).
+        request_id = str(uuid.uuid4())
+        bind_request_context(request_id=request_id)
+        try:
+            response = await call_next(request)
+        finally:
+            clear_request_context()
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     def _config(session_id: str) -> dict:
         # LangGraph's default recursion_limit (25) counts each worker-step ->
@@ -209,6 +257,14 @@ def create_app(
                         {"step": node_name, "errors": output.get("errors", [])},
                     )
 
+        # session_id (Week 19 correlation ID): bound for this whole
+        # background task's lifetime, not just the initial request/response
+        # cycle (add_request_id's request_id above is already long gone by
+        # the time this finishes) - every log line from every node this run
+        # touches, even deep in nodes.py, carries it (contextvars propagate
+        # into asyncio.to_thread's worker thread per its own guarantee).
+        bind_request_context(session_id=session_id)
+        start = time.monotonic()
         try:
             await asyncio.to_thread(_run_and_record_steps)
             state = graph.get_state(config)
@@ -225,6 +281,9 @@ def create_app(
             logger.exception("plan execution failed for %s", session_id)
             session_store.update_status(session_id, "failed")
             session_store.append_event(session_id, "error", {"message": str(exc)})
+        finally:
+            PLANNING_DURATION.observe(time.monotonic() - start)
+            clear_request_context()
 
     @app.post(
         "/plan",

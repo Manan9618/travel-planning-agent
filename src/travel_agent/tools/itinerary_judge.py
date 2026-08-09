@@ -24,6 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from travel_agent.config import settings
 from travel_agent.models.core import Itinerary, TravelPreferences
+from travel_agent.observability.metrics import record_llm_usage
 
 _SYSTEM_PROMPT = """You are an expert travel agent grading a day-by-day itinerary that was \
 generated automatically for a client. Score it honestly on four dimensions, each 0-10 \
@@ -82,11 +83,13 @@ def render_itinerary_summary(preferences: TravelPreferences, itinerary: Itinerar
 
 class ItineraryJudge:
     def __init__(self, model: str | None = None, temperature: float = 0.0) -> None:
+        self._model = model or settings.openai_model
         self._llm = ChatOpenAI(
-            model=model or settings.openai_model,
+            model=self._model,
             temperature=temperature,
             api_key=settings.openai_api_key or None,
-        ).with_structured_output(JudgeScores)
+            # include_raw=True (Week 19): see PreferenceParser for why.
+        ).with_structured_output(JudgeScores, include_raw=True)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -95,10 +98,14 @@ class ItineraryJudge:
     )
     def _invoke(self, summary: str) -> JudgeScores:
         messages = [("system", _SYSTEM_PROMPT), ("human", summary)]
-        result = self._llm.invoke(messages)
-        if not isinstance(result, JudgeScores):
+        response = self._llm.invoke(messages)
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        if not isinstance(parsed, JudgeScores):
             raise ValueError("LLM did not return structured output")
-        return result
+        raw = response.get("raw")
+        if raw is not None:
+            record_llm_usage(self._model, getattr(raw, "usage_metadata", None))
+        return parsed
 
     def judge(self, preferences: TravelPreferences, itinerary: Itinerary) -> JudgeScores:
         summary = render_itinerary_summary(preferences, itinerary)

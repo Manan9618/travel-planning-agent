@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from travel_agent.tools.attraction_describer import (
@@ -107,9 +108,10 @@ def test_fetch_returns_empty_dict_on_malformed_response(fake_cache):
 def test_fetch_maps_titles_to_descriptions(fake_cache):
     tool = _tool(fake_cache)
     tool._llm = MagicMock()
-    tool._llm.invoke.return_value = _fake_response(
-        [("Eiffel Tower", "desc 1"), ("Louvre", "desc 2")]
-    )
+    tool._llm.invoke.return_value = {
+        "raw": SimpleNamespace(usage_metadata=None),
+        "parsed": _fake_response([("Eiffel Tower", "desc 1"), ("Louvre", "desc 2")]),
+    }
     result = tool._fetch(["Eiffel Tower", "Louvre"], "Paris")
     assert result == {"Eiffel Tower": "desc 1", "Louvre": "desc 2"}
 

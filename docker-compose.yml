@@ -39,6 +39,10 @@ services:
       DATABASE_URL: postgresql://travel_agent:travel_agent@postgres:5432/travel_agent
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      # JSON logs here regardless of what .env has for local `make serve`
+      # (console, human-readable) - a container's logs are meant to be
+      # aggregated/queried, not read directly off a terminal.
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +68,41 @@ services:
     ports:
       - "8080:80"
 
+  # Week 19 observability. Both scrape/read from the backend's real
+  # /metrics endpoint - nothing here is faked or pre-seeded.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      # One mount, not two: a second bind mount nested inside this one
+      # (e.g. at .../dashboards/json) fails outright - Docker can't create
+      # a mountpoint inside an already-read-only parent mount. The
+      # dashboard JSON lives inside provisioning/ itself instead (see
+      # observability/grafana/provisioning/dashboards/json/), so this one
+      # mount covers datasources, the dashboard provider config, and the
+      # dashboard JSON together.
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+
 volumes:
   postgres_data:
   backend_output:
+  prometheus_data:
+  grafana_data:

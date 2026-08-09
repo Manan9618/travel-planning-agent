@@ -19,6 +19,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from travel_agent.config import settings
+from travel_agent.observability.metrics import record_llm_usage
 from travel_agent.utils.cache import Cache
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,15 @@ class _AttractionDescriptions(BaseModel):
 
 class AttractionDescriberTool:
     def __init__(self, model: str | None = None, cache: Cache | None = None) -> None:
+        self._model = model or settings.openai_model
         self._llm = ChatOpenAI(
-            model=model or settings.openai_model,
+            model=self._model,
             temperature=0.3,
             api_key=settings.openai_api_key or None,
-        ).with_structured_output(_AttractionDescriptions)
+            # include_raw=True (Week 19): see PreferenceParser for why -
+            # cost tracking needs the raw AIMessage's usage_metadata, which
+            # a plain with_structured_output() call discards.
+        ).with_structured_output(_AttractionDescriptions, include_raw=True)
         self._cache = cache or Cache()
 
     def describe(self, titles: list[str], destination: str) -> dict[str, str]:
@@ -90,9 +95,13 @@ class AttractionDescriberTool:
         except Exception as exc:
             logger.warning("Attraction description lookup failed for %s: %s", destination, exc)
             return {}
-        if not isinstance(response, _AttractionDescriptions):
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        if not isinstance(parsed, _AttractionDescriptions):
             return {}
-        return {a.title: a.description for a in response.attractions}
+        raw = response.get("raw")
+        if raw is not None:
+            record_llm_usage(self._model, getattr(raw, "usage_metadata", None))
+        return {a.title: a.description for a in parsed.attractions}
 
     @staticmethod
     def _cache_key(title: str, destination: str) -> str:

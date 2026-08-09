@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: travel-agent-backend
+    metrics_path: /metrics
+    static_configs:
+      # "backend" is the compose service name - resolved via Docker's own
+      # DNS inside the compose network, same as backend's own DATABASE_URL/
+      # REDIS_URL pointing at "postgres"/"redis" rather than "localhost".
+      - targets: ["backend:8000"]

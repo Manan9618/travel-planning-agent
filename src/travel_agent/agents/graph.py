@@ -34,6 +34,7 @@ from travel_agent.agents.nodes import (
 )
 from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.agents.supervisor import SupervisorAgent
+from travel_agent.observability.metrics import instrument_node
 from travel_agent.tools.attraction_describer import AttractionDescriberTool
 from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
@@ -161,26 +162,41 @@ def build_planning_graph(
     supervisor = supervisor or SupervisorAgent()
 
     graph = StateGraph(PlanningState)
+
+    # Every worker-step node (not "supervisor", a fast decision function
+    # rather than a tool) is wrapped with Prometheus call-count/duration
+    # tracking (Week 19) at registration time here, not inside each node
+    # factory in nodes.py - instrumenting a new step never means touching
+    # its own function.
+    def add_instrumented_node(step: PlanningStep, node) -> None:
+        graph.add_node(step.value, instrument_node(step.value, node))
+
     graph.add_node("supervisor", make_supervisor_node(supervisor))
-    graph.add_node(PlanningStep.PARSE_PREFERENCES.value, make_parse_preferences_node(parser))
-    graph.add_node(PlanningStep.SEARCH_FLIGHTS.value, make_search_flights_node(flight_tool))
-    graph.add_node(PlanningStep.SEARCH_HOTELS.value, make_search_hotels_node(hotel_tool))
-    graph.add_node(PlanningStep.FIND_ATTRACTIONS.value, make_find_attractions_node(attraction_tool))
-    graph.add_node(PlanningStep.FIND_RESTAURANTS.value, make_find_restaurants_node(restaurant_tool))
-    graph.add_node(PlanningStep.CHECK_WEATHER.value, make_check_weather_node(weather_tool))
-    graph.add_node(PlanningStep.BUILD_ITINERARY.value, make_build_itinerary_node(itinerary_builder))
-    graph.add_node(
-        PlanningStep.ENRICH_ATTRACTIONS.value,
+    add_instrumented_node(PlanningStep.PARSE_PREFERENCES, make_parse_preferences_node(parser))
+    add_instrumented_node(PlanningStep.SEARCH_FLIGHTS, make_search_flights_node(flight_tool))
+    add_instrumented_node(PlanningStep.SEARCH_HOTELS, make_search_hotels_node(hotel_tool))
+    add_instrumented_node(
+        PlanningStep.FIND_ATTRACTIONS, make_find_attractions_node(attraction_tool)
+    )
+    add_instrumented_node(
+        PlanningStep.FIND_RESTAURANTS, make_find_restaurants_node(restaurant_tool)
+    )
+    add_instrumented_node(PlanningStep.CHECK_WEATHER, make_check_weather_node(weather_tool))
+    add_instrumented_node(
+        PlanningStep.BUILD_ITINERARY, make_build_itinerary_node(itinerary_builder)
+    )
+    add_instrumented_node(
+        PlanningStep.ENRICH_ATTRACTIONS,
         make_enrich_attractions_node(photo_tool, description_tool),
     )
-    graph.add_node(
-        PlanningStep.CHECK_CONFLICTS.value,
+    add_instrumented_node(
+        PlanningStep.CHECK_CONFLICTS,
         make_check_conflicts_node(conflict_detector, conflict_resolver),
     )
-    graph.add_node(PlanningStep.OPTIMIZE_BUDGET.value, make_optimize_budget_node(budget_optimizer))
-    graph.add_node(PlanningStep.GENERATE_MAP.value, make_generate_map_node(map_generator))
-    graph.add_node(
-        PlanningStep.GENERATE_PDF.value,
+    add_instrumented_node(PlanningStep.OPTIMIZE_BUDGET, make_optimize_budget_node(budget_optimizer))
+    add_instrumented_node(PlanningStep.GENERATE_MAP, make_generate_map_node(map_generator))
+    add_instrumented_node(
+        PlanningStep.GENERATE_PDF,
         make_generate_pdf_node(
             pdf_generator,
             map_generator,
@@ -188,7 +204,7 @@ def build_planning_graph(
             render_map_thumbnail=render_pdf_map_thumbnail,
         ),
     )
-    graph.add_node(PlanningStep.HUMAN_REVIEW.value, make_human_review_node())
+    add_instrumented_node(PlanningStep.HUMAN_REVIEW, make_human_review_node())
 
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(

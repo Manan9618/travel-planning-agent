@@ -38,5 +38,21 @@ class Settings:
 
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 
+    # Week 19 observability. LangSmith tracing isn't read here at all —
+    # LangChain/LangGraph pick LANGCHAIN_TRACING_V2/LANGCHAIN_API_KEY/
+    # LANGCHAIN_PROJECT straight out of the environment (already populated
+    # by load_dotenv() above), no application code needed. langsmith_enabled
+    # below is only for this app's own startup log line, not enforcement.
+    langsmith_enabled: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+
+    # Empty (default) disables Sentry entirely — same optional-credential
+    # pattern as every other integration in this file.
+    sentry_dsn: str = os.getenv("SENTRY_DSN", "")
+
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    # "console" (human-readable, colorized) for local dev; "json" for
+    # anywhere logs get aggregated (Docker, CI, a real deployment).
+    log_format: str = os.getenv("LOG_FORMAT", "console")
+
 
 settings = Settings()

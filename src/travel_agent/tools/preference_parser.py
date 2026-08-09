@@ -24,6 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from travel_agent.config import settings
 from travel_agent.models.core import BudgetTier, Pace, TravelPreferences, TripStyle
+from travel_agent.observability.metrics import record_llm_usage
 
 _SYSTEM_PROMPT = """You extract structured travel-planning details from a user's natural \
 language request. Today's date is {today}. Resolve relative dates ("next month", "in July", \
@@ -57,11 +58,20 @@ class PreferenceParser:
     """Wraps an LLM with structured output to turn free text into `TravelPreferences`."""
 
     def __init__(self, model: str | None = None, temperature: float = 0.0) -> None:
+        self._model = model or settings.openai_model
         self._llm = ChatOpenAI(
-            model=model or settings.openai_model,
+            model=self._model,
             temperature=temperature,
             api_key=settings.openai_api_key or None,
-        ).with_structured_output(_ParsedFields)
+            # include_raw=True (Week 19): with_structured_output() normally
+            # returns just the parsed schema instance, discarding the raw
+            # AIMessage - and with it, usage_metadata, needed for cost
+            # tracking. include_raw=True returns {"raw", "parsed",
+            # "parsing_error"} instead and stops raising on a parse failure
+            # (parsed is None instead) - the explicit check below restores
+            # the original raise-on-failure behavior tenacity's retry here
+            # depends on.
+        ).with_structured_output(_ParsedFields, include_raw=True)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -73,10 +83,14 @@ class PreferenceParser:
             ("system", _SYSTEM_PROMPT.format(today=reference_date.isoformat())),
             ("human", text),
         ]
-        result = self._llm.invoke(messages)
-        if not isinstance(result, _ParsedFields):
+        response = self._llm.invoke(messages)
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        if not isinstance(parsed, _ParsedFields):
             raise ValueError("LLM did not return structured output")
-        return result
+        raw = response.get("raw")
+        if raw is not None:
+            record_llm_usage(self._model, getattr(raw, "usage_metadata", None))
+        return parsed
 
     def parse(self, text: str, reference_date: date | None = None) -> TravelPreferences:
         """Parse a natural language travel request into TravelPreferences.
