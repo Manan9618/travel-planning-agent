@@ -55,7 +55,11 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from travel_agent.agents.graph import build_planning_graph, build_sqlite_checkpointer
+from travel_agent.agents.graph import (
+    build_planning_graph,
+    build_postgres_checkpointer,
+    build_sqlite_checkpointer,
+)
 from travel_agent.api.schemas import (
     PlanRequest,
     PlanResponse,
@@ -63,7 +67,7 @@ from travel_agent.api.schemas import (
     ResumeRequest,
     SessionStateResponse,
 )
-from travel_agent.api.sessions import SessionStore
+from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
 from travel_agent.config import settings
 from travel_agent.models.core import Itinerary
 from travel_agent.tools.itinerary_narrator import ItineraryNarrator
@@ -85,12 +89,23 @@ def verify_api_key(request: Request) -> None:
 
 def create_app(
     graph: CompiledStateGraph | None = None,
-    session_store: SessionStore | None = None,
+    session_store: SessionStore | PostgresSessionStore | None = None,
     narrator: ItineraryNarrator | None = None,
     parser: PreferenceParser | None = None,
 ) -> FastAPI:
-    graph = graph or build_planning_graph(checkpointer=build_sqlite_checkpointer())
-    session_store = session_store or SessionStore()
+    # Postgres (Week 18's Docker Compose) when DATABASE_URL is set, SQLite
+    # otherwise (plain `make serve`, unchanged from Weeks 4/15) - both the
+    # checkpointer and the session store switch together, the same
+    # degrades-gracefully-without-real-infra pattern Redis caching uses
+    # everywhere else in this project.
+    graph = graph or build_planning_graph(
+        checkpointer=(
+            build_postgres_checkpointer(settings.database_url)
+            if settings.database_url
+            else build_sqlite_checkpointer()
+        )
+    )
+    session_store = session_store or build_session_store(settings.database_url)
     narrator = narrator or ItineraryNarrator()
     parser = parser or PreferenceParser()
 

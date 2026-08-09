@@ -1,0 +1,79 @@
+# Render Blueprint (Week 18) — prepared, not deployed: this repo has no
+# connected Render account. The moment one is, `render.yaml` at the repo
+# root is auto-detected by "New +" -> "Blueprint" and provisions everything
+# below in one go — reuses the same Dockerfiles docker-compose.yml already
+# builds and runs locally, so what deploys is exactly what's been
+# live-tested, not a separate config path.
+#
+# Manual step Render can't infer from this file: after the first deploy,
+# open each service's Environment tab and fill in the API keys marked
+# `sync: false` below (same ones already in your local .env — Render's
+# UI is the "GitHub Secrets" analogue for a running service, .env itself
+# is never committed).
+#
+# Railway is the plan's other named option and needs even less config —
+# it auto-detects a Dockerfile per service with no blueprint file at all,
+# so this project doesn't duplicate one; `railway up` against this repo
+# with DATABASE_URL/REDIS_URL wired to Railway's own Postgres/Redis
+# plugins (its dashboard equivalent of what's set here) is all it takes.
+
+services:
+  - type: web
+    name: travel-agent-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /docs
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TRAVELPAYOUTS_API_KEY
+        sync: false
+      - key: BOOKING_RAPIDAPI_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: OPENWEATHERMAP_API_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: UNSPLASH_ACCESS_KEY
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://travel-agent-frontend.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: travel-agent-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: travel-agent-redis
+          property: connectionString
+
+  - type: web
+    name: travel-agent-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: starter
+    healthCheckPath: /health
+    dockerBuildArgs:
+      # Baked in at build time (Vite) — update to match the backend
+      # service's real onrender.com URL if it differs from the default
+      # naming Render assigns.
+      VITE_API_BASE_URL: https://travel-agent-backend.onrender.com
+
+  - type: redis
+    name: travel-agent-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: travel-agent-db
+    plan: free

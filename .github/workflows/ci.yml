@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      # Backs the Week 18 Postgres-gated tests (test_sessions_postgres.py,
+      # test_checkpointers.py) - they skip gracefully without this, but a
+      # real service container here means CI actually exercises them,
+      # unlike a bare local `make test` run.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: travel_agent
+          POSTGRES_PASSWORD: travel_agent
+          POSTGRES_DB: travel_agent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U travel_agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.3
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry/virtualenvs
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Install Playwright's Chromium
+        run: poetry run playwright install --with-deps chromium
+
+      - name: Lint (ruff + black --check)
+        run: make lint
+
+      - name: Test
+        run: poetry run pytest --cov=travel_agent --cov-report=term-missing
+        env:
+          TEST_DATABASE_URL: postgresql://travel_agent:travel_agent@localhost:5432/travel_agent
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --run
+      - run: npm run build
+
+  docker:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds run on every push/PR regardless of credentials - a Dockerfile
+      # that stops building is exactly the kind of thing CI should catch.
+      # Only main pushes with DOCKERHUB_USERNAME/DOCKERHUB_TOKEN configured
+      # (repo Settings -> Secrets and variables -> Actions) actually push;
+      # everyone else gets full build validation with no account needed.
+      - name: Log in to Docker Hub
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.DOCKERHUB_USERNAME != '' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME || 'local' }}/travel-agent-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME || 'local' }}/travel-agent-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.DOCKERHUB_USERNAME != '' }}
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.PUBLIC_API_BASE_URL || 'http://localhost:8000' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME || 'local' }}/travel-agent-frontend:latest
+            ${{ secrets.DOCKERHUB_USERNAME || 'local' }}/travel-agent-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

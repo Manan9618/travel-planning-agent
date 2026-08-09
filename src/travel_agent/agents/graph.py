@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -75,6 +76,33 @@ def build_sqlite_checkpointer(db_path: str = "checkpoints.sqlite") -> SqliteSave
     conn = sqlite3.connect(db_path, check_same_thread=False)
     checkpointer = SqliteSaver(conn)
     checkpointer.setup()
+    return checkpointer
+
+
+def build_postgres_checkpointer(database_url: str) -> PostgresSaver:
+    """A Postgres-backed checkpointer (Week 18), used instead of
+    `build_sqlite_checkpointer` when `DATABASE_URL` is set (Docker Compose)
+    - see `travel_agent.api.sessions.build_session_store` for the matching
+    swap on the session-metadata side.
+
+    `PostgresSaver.from_conn_string` is a `@contextmanager`-decorated
+    generator (`with Connection.connect(...) as conn: yield cls(conn)`), not
+    a plain factory. Entering it manually without keeping the context
+    manager object itself alive is a real bug found live-testing this: with
+    no reference left to it, Python's GC finalizes the generator, which
+    throws `GeneratorExit` at the `yield` and runs the inner `with` block's
+    `__exit__` - silently closing the connection out from under the
+    returned checkpointer (surfaced as `psycopg.OperationalError: the
+    connection is closed` on first real use, not at construction time).
+    Stashing the context manager on the checkpointer keeps it referenced for
+    the process's lifetime, the same "never explicitly closed, this outlives
+    the request" choice `build_sqlite_checkpointer` already makes with its
+    raw `sqlite3.connect()`.
+    """
+    context = PostgresSaver.from_conn_string(database_url)
+    checkpointer = context.__enter__()
+    checkpointer.setup()
+    checkpointer._connection_context = context
     return checkpointer
 
 

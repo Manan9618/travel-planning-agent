@@ -1,4 +1,6 @@
-from travel_agent.api.sessions import SessionStore
+from unittest.mock import patch
+
+from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
 
 
 def _store() -> SessionStore:
@@ -71,3 +73,17 @@ def test_event_payload_round_trips_nested_structures():
     payload = {"node": "build_itinerary", "output": {"itinerary": {"days": [1, 2, 3]}}}
     store.append_event("s1", "node_update", payload)
     assert store.get_events("s1")[0].payload == payload
+
+
+# --- build_session_store (Week 18: Postgres when DATABASE_URL is set) -----
+
+
+def test_build_session_store_returns_sqlite_store_without_database_url():
+    assert isinstance(build_session_store(""), SessionStore)
+
+
+def test_build_session_store_returns_postgres_store_with_database_url():
+    with patch("travel_agent.api.sessions.psycopg.connect") as mock_connect:
+        store = build_session_store("postgresql://user@host/db")
+    assert isinstance(store, PostgresSessionStore)
+    mock_connect.assert_called_once()

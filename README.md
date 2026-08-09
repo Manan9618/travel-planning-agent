@@ -788,6 +788,116 @@ activities", landing on nonsense results).
       every survivor including equivalent mutants that no test ever could
       kill) — the rest are left as a documented, not urgent, backlog
 
+**Phase 5, Week 18 — Dockerization & CI/CD Pipeline** — done
+
+- [x] **Real Postgres migration**, finally resolving Week 15's documented
+      "Postgres deferred to Week 18" note: `PostgresSessionStore` (new,
+      mirrors `SessionStore`'s exact interface) and
+      `build_postgres_checkpointer` (new, wraps `PostgresSaver`) are used
+      automatically whenever `DATABASE_URL` is set — `build_session_store`
+      picks between them. Plain `make serve` with no `DATABASE_URL` is
+      completely unchanged (SQLite), the same degrades-gracefully-without-
+      real-infra pattern Redis caching already uses everywhere in this
+      project — Postgres is additive, not a replacement requiring new setup
+- [x] Found and fixed a real bug live-testing this against a real local
+      Postgres (installed via Homebrew specifically to verify this end-to-
+      end before trusting it): `PostgresSaver.from_conn_string` is a
+      `@contextmanager` generator (`with Connection.connect(...) as conn:
+      yield cls(conn)`), not a plain factory. Entering it manually
+      (`.__enter__()`) without keeping the context manager object itself
+      referenced let Python's GC finalize the generator once the temporary
+      went out of scope, throwing `GeneratorExit` at the `yield` and
+      running the inner `with` block's `__exit__` — silently closing the
+      connection. First symptom was `psycopg.OperationalError: the
+      connection is closed` on first real use, not at construction, which
+      is exactly why a construct-then-`gc.collect()`-then-use regression
+      test exists for this and not just a "was it constructed" check
+- [x] Found and fixed a second real bug in the same pass: `playwright` was
+      listed only under `[tool.poetry.group.dev.dependencies]`, but
+      `generate_pdf`'s map-thumbnail step (Week 13/14) imports
+      `playwright.sync_api` directly in production code
+      (`travel_map_generator.py`'s `render_thumbnail_png`). A Docker image
+      built with `poetry install --only main` would have silently dropped
+      map thumbnails from every generated PDF — caught gracefully (the
+      existing "thumbnail failure is non-fatal" path), not a crash, but a
+      real regression from documented Week 13/14 behavior that only a real
+      container build surfaced. Moved to main dependencies;
+      `pytest-playwright` (E2E-suite-only) correctly stayed in dev
+- [x] Backend `Dockerfile`: multi-stage (Poetry installs into a venv in a
+      `builder` stage; `runtime` copies just that venv + `src/`, so build
+      tools never ship in the final image). Runtime installs WeasyPrint's
+      Pango/cairo/gdk-pixbuf system libs and Playwright's own Chromium +
+      its OS deps (`playwright install --with-deps chromium`) — found the
+      exact system package names by actually building it: `python:3.11-
+      slim`'s underlying Debian release renamed `libgdk-pixbuf2.0-0` to
+      `libgdk-pixbuf-2.0-0`, which only a real `docker build` catches, not
+      reading WeasyPrint's install docs
+- [x] Frontend `Dockerfile`: multi-stage (Node builds the Vite bundle;
+      nginx serves it, with an SPA `try_files` fallback in `nginx.conf`).
+      `VITE_API_BASE_URL` is a build `ARG`, not a runtime env var — Vite
+      bakes `VITE_`-prefixed vars into the JS bundle at build time, so
+      there's no such thing as "the same image, repointed at a different
+      backend" without a rebuild. Documented explicitly in the Dockerfile
+      rather than left as a surprise
+- [x] `docker-compose.yml`: `postgres` + `redis` + `backend` + `frontend`,
+      with real healthchecks (`pg_isready`, `redis-cli ping`, the
+      Dockerfiles' own `HEALTHCHECK` directives) gating `depends_on` so the
+      backend never starts against a Postgres that isn't ready yet. The
+      frontend's `VITE_API_BASE_URL` build arg is deliberately
+      `http://localhost:8000` (the host-mapped port the *browser* reaches),
+      not `http://backend:8000` (Docker's in-network service name, which
+      only resolves *inside* the compose network) — a common point of
+      confusion in compose+SPA setups, worth being explicit about in the
+      file itself
+- [x] Installed Docker for real for this (colima — this machine had no
+      Docker daemon at all) specifically to avoid writing untested
+      infrastructure config, consistent with how every other week in this
+      project verifies against the real thing rather than assuming
+      Dockerfiles are correct from a read-through. Found and fixed a third
+      real bug this surfaced: `.env.example` (and this machine's own
+      `.env`) had `DATABASE_URL=postgresql://localhost:5432/travel_agent`
+      as a leftover placeholder from early in the project, non-empty
+      unlike every other optional var in that file — the moment
+      `create_app()` started actually reading it (this week), plain
+      `make serve` broke, trying to reach a Postgres that was never meant
+      to be required for local dev. Blanked both files; `DATABASE_URL` is
+      now correctly empty-by-default like every other optional credential
+- [x] **Full stack live-tested end-to-end** against the real running
+      containers: `docker-compose up --build` (all four services healthy),
+      a real `POST /plan` through the containerized backend completed with
+      a real GPT-4o-generated Rome itinerary, PDF, and map — confirmed
+      session + checkpoint rows actually landed in the `postgres`
+      container's tables via `docker exec ... psql`, then drove the
+      *frontend* container (nginx on :8080) with a real headless browser:
+      typed a request, watched it plan and render, zero console errors,
+      zero failed requests
+- [x] GitHub Actions CI (`.github/workflows/ci.yml`): backend job (lint,
+      then the full test suite against a real `postgres:16-alpine` service
+      container so the Week 18 Postgres-gated tests actually run, not just
+      skip), frontend job (lint, test, build), and a `docker` job that
+      builds both Dockerfiles on every push/PR (catches a broken Dockerfile
+      regardless of credentials) and only pushes to Docker Hub on `main`
+      when `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets are configured —
+      no hardcoded credentials anywhere; every key `.env` already gitignores
+      locally has a GitHub Secrets equivalent for CI/deployment
+- [x] Deployment config prepared, not executed — no Railway/Render account
+      is connected to this project. `render.yaml` (Render auto-detects this
+      at the repo root as a Blueprint) provisions the backend, frontend,
+      managed Postgres, and managed Redis from the exact same Dockerfiles
+      already built and tested locally, with API keys marked `sync: false`
+      (filled in via Render's dashboard, its GitHub-Secrets equivalent for
+      a running service) and health checks pointed at the same `/docs` and
+      `/health` paths the Docker `HEALTHCHECK` directives use. Railway
+      needs no blueprint file at all (auto-detects a `Dockerfile` per
+      service), so this project doesn't duplicate one for it — documented
+      inline in `render.yaml` instead
+- [x] 13 new backend tests (9 in `test_sessions_postgres.py`, 2 in
+      `test_checkpointers.py` — both real-Postgres-gated, skip gracefully
+      without one so `make test` stays offline-by-default; 2 in
+      `test_sessions.py` for `build_session_store`'s branching, mocked, no
+      real connection needed); 543 backend tests passing (11 skip without
+      a local Postgres, all 13 run for real in CI)
+
 ## Setup
 
 ```bash
@@ -805,6 +915,22 @@ Run the backend and frontend in two terminals:
 make serve            # FastAPI on :8000
 make frontend-dev     # Vite dev server on :5173
 ```
+
+### Docker (Week 18)
+
+The whole stack — backend, frontend, Postgres, Redis — in one command,
+using the same `.env` as above:
+
+```bash
+docker-compose up --build
+# backend  -> http://localhost:8000
+# frontend -> http://localhost:8080
+```
+
+Plain `make serve`/`make frontend-dev` above need no Docker and use local
+SQLite files, exactly as in every earlier week — Compose is additive, not
+a replacement. If you also run `make serve` locally, stop it first
+(`docker-compose` and `make serve` both want host port 8000).
 
 ## Project layout
 
@@ -826,11 +952,16 @@ frontend/               # React 18 + TypeScript + Vite chat UI (added Week 16)
     components/
     lib/                # API client, WebSocket hook, theme hook
     types/               # hand-written TS mirror of the API's Pydantic schemas
+  Dockerfile             # multi-stage: node build -> nginx (added Week 18)
+Dockerfile               # multi-stage: poetry build -> slim runtime (added Week 18)
+docker-compose.yml        # backend + frontend + postgres + redis (added Week 18)
+render.yaml               # Render deploy blueprint, prepared not deployed (added Week 18)
+.github/workflows/ci.yml  # lint -> test -> build -> push (added Week 18)
 ```
 
 ## Tech stack
 
 Python 3.11+ (pinned to 3.11.14 via `.python-version`), LangGraph + LangChain, OpenAI GPT-4o,
-FastAPI + uvicorn + WebSockets, slowapi, PostgreSQL + Redis, Docker, pytest, Folium, Playwright,
-WeasyPrint, qrcode. React 18 + TypeScript + Vite + Tailwind CSS 4 + react-leaflet, Vitest +
-Testing Library.
+FastAPI + uvicorn + WebSockets, slowapi, PostgreSQL + Redis, Docker + Docker Compose,
+GitHub Actions, pytest + pytest-playwright + locust + mutmut, Folium, Playwright, WeasyPrint,
+qrcode. React 18 + TypeScript + Vite + Tailwind CSS 4 + react-leaflet, Vitest + Testing Library.
