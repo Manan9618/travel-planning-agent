@@ -32,7 +32,7 @@ from travel_agent.agents.nodes import (
     make_search_flights_node,
     make_search_hotels_node,
 )
-from travel_agent.agents.state import PlanningState, PlanningStep
+from travel_agent.agents.state import PlanningState, PlanningStep, determine_valid_steps
 from travel_agent.agents.supervisor import SupervisorAgent
 from travel_agent.observability.metrics import instrument_node
 from travel_agent.tools.attraction_describer import AttractionDescriberTool
@@ -109,14 +109,28 @@ def build_postgres_checkpointer(database_url: str) -> PostgresSaver:
 
 def make_supervisor_node(supervisor: SupervisorAgent):
     def node(state: PlanningState) -> dict:
+        # `determine_valid_steps` only ever returns more than one step for
+        # the search phase (flights/hotels/attractions/restaurants/weather -
+        # every other phase in state.py has exactly one legal next step).
+        # Those five tools don't depend on each other or on one another's
+        # results, so there's nothing for the supervisor's LLM tie-break to
+        # add: fan all of them out to run in the same LangGraph superstep
+        # (Week 20) instead of paying an LLM call just to pick an order that
+        # doesn't affect correctness. See `_route_from_supervisor` below for
+        # the list-return conditional-edge fan-out itself.
+        valid = determine_valid_steps(state)
+        if len(valid) > 1:
+            return {"next_step": [step.value for step in valid]}
         next_step = supervisor.decide_next(state)
         return {"next_step": next_step.value}
 
     return node
 
 
-def _route_from_supervisor(state: PlanningState) -> str:
+def _route_from_supervisor(state: PlanningState) -> str | list[str]:
     step = state["next_step"]
+    if isinstance(step, list):
+        return step
     return END if step == PlanningStep.DONE.value else step
 
 

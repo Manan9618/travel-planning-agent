@@ -8,8 +8,26 @@ from travel_agent.models.core import BudgetTier, Pace, TravelPreferences, TripSt
 from travel_agent.tools.preference_parser import PreferenceParser, _ParsedFields
 
 
+class _FakeSemanticCache:
+    """Always-miss stand-in - `_invoke`'s real path calls
+    `self._embeddings.embed_query(...)` (a real OpenAI network call) before
+    ever touching the semantic cache, so any test that exercises `_invoke`
+    directly (rather than monkeypatching it away entirely) needs this to
+    avoid making that call with the dummy test API key."""
+
+    def get(self, text, guard=""):
+        return None
+
+    def set(self, text, value, guard=""):
+        pass
+
+
+def _parser() -> PreferenceParser:
+    return PreferenceParser(semantic_cache=_FakeSemanticCache())
+
+
 def _parser_with_result(monkeypatch, fields: _ParsedFields) -> PreferenceParser:
-    parser = PreferenceParser()
+    parser = _parser()
     monkeypatch.setattr(parser, "_invoke", lambda text, reference_date: fields)
     return parser
 
@@ -222,7 +240,7 @@ def test_parse_uses_explicit_reference_date(monkeypatch):
 
 
 def test_invoke_retries_on_transient_failure_then_succeeds(monkeypatch):
-    parser = PreferenceParser()
+    parser = _parser()
     good_result = _minimal_fields()
     good_response = {"raw": SimpleNamespace(usage_metadata=None), "parsed": good_result}
     mock_llm = MagicMock()
@@ -236,7 +254,7 @@ def test_invoke_retries_on_transient_failure_then_succeeds(monkeypatch):
 
 
 def test_invoke_raises_after_exhausting_retries(monkeypatch):
-    parser = PreferenceParser()
+    parser = _parser()
     mock_llm = MagicMock()
     mock_llm.invoke.side_effect = RuntimeError("down")
     monkeypatch.setattr(parser, "_llm", mock_llm)
@@ -248,13 +266,89 @@ def test_invoke_raises_after_exhausting_retries(monkeypatch):
 
 
 def test_invoke_raises_value_error_on_unstructured_response(monkeypatch):
-    parser = PreferenceParser()
+    parser = _parser()
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = {"not": "structured"}
     monkeypatch.setattr(parser, "_llm", mock_llm)
 
     with pytest.raises(ValueError):
         parser._invoke("Paris trip", date.today())
+
+
+# --- semantic cache integration (Week 20) ----------------------------------
+
+
+class _RecordingSemanticCache:
+    def __init__(self, hit=None):
+        self._hit = hit
+        self.get_calls = []
+        self.set_calls = []
+
+    def get(self, text, guard=""):
+        self.get_calls.append((text, guard))
+        return self._hit
+
+    def set(self, text, value, guard=""):
+        self.set_calls.append((text, value, guard))
+
+
+def test_invoke_skips_llm_entirely_on_semantic_cache_hit(monkeypatch):
+    hit = _minimal_fields(destination="Paris").model_dump(mode="json")
+    parser = PreferenceParser(semantic_cache=_RecordingSemanticCache(hit=hit))
+    mock_llm = MagicMock()
+    monkeypatch.setattr(parser, "_llm", mock_llm)
+
+    result = parser._invoke("a five-day Paris trip", date(2026, 1, 1))
+
+    assert result.destination == "Paris"
+    mock_llm.invoke.assert_not_called()
+
+
+def test_invoke_populates_semantic_cache_on_miss(monkeypatch):
+    cache = _RecordingSemanticCache(hit=None)
+    parser = PreferenceParser(semantic_cache=cache)
+    good_result = _minimal_fields()
+    good_response = {"raw": SimpleNamespace(usage_metadata=None), "parsed": good_result}
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = good_response
+    monkeypatch.setattr(parser, "_llm", mock_llm)
+
+    parser._invoke("Paris trip", date(2026, 1, 1))
+
+    assert len(cache.set_calls) == 1
+    text, value, guard = cache.set_calls[0]
+    assert text == "Paris trip"
+    assert value["destination"] == "Paris"
+    assert guard == "2026-01-01::paris"
+
+
+def test_cache_guard_matches_across_reworded_paraphrases():
+    guard_a = PreferenceParser._cache_guard("5 days in Paris under $3000", date(2026, 1, 1))
+    guard_b = PreferenceParser._cache_guard("$3000 for 5 days, Paris", date(2026, 1, 1))
+    assert guard_a == guard_b
+
+
+def test_cache_guard_differs_on_a_different_budget():
+    guard_a = PreferenceParser._cache_guard("5 days in Paris under $3000", date(2026, 1, 1))
+    guard_c = PreferenceParser._cache_guard("5 days in Paris under $1000", date(2026, 1, 1))
+    assert guard_a != guard_c
+
+
+def test_cache_guard_differs_on_a_different_reference_date():
+    guard_a = PreferenceParser._cache_guard("5 days in Paris under $3000", date(2026, 1, 1))
+    guard_d = PreferenceParser._cache_guard("5 days in Paris under $3000", date(2026, 1, 2))
+    assert guard_a != guard_d
+
+
+def test_cache_guard_differs_on_a_different_destination():
+    # Real bug this guards against (Week 20 live-testing): whole-text
+    # embedding similarity alone scored these two requests at ~0.78 cosine
+    # similarity - close enough to a genuine paraphrase's ~0.82 that
+    # similarity alone can't be trusted to tell "same trip, reworded" from
+    # "different destination, same budget" apart.
+    guard_paris = PreferenceParser._cache_guard("5 days in Paris under $3000", date(2026, 1, 1))
+    guard_tokyo = PreferenceParser._cache_guard("5 days in Tokyo under $3000", date(2026, 1, 1))
+    assert guard_paris != guard_tokyo
 
 
 def test_parse_end_to_end_with_full_scenario(monkeypatch):

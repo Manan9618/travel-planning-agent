@@ -1002,6 +1002,120 @@ activities", landing on nonsense results).
       rather than absolute values; 564 backend tests passing (11 skip
       without local Postgres, matching Week 18)
 
+**Phase 5, Week 20 — Performance Optimization & Cost Reduction** — done
+
+- [x] **Profiling**: the top bottleneck was structural, not a slow line of
+      code — `search_flights`/`search_hotels`/`find_attractions`/
+      `find_restaurants`/`check_weather` don't depend on each other or on
+      one another's results, but the graph ran them one at a time because
+      `SupervisorAgent` picked a single next step per turn. Every other
+      phase in `determine_valid_steps` (state.py) already reduces to
+      exactly one legal next step; this one is the only place where
+      multiple independent, network-bound tool calls were being
+      serialized for no structural reason
+- [x] **Parallel search-phase execution**: `make_supervisor_node`
+      (`agents/graph.py`) now fans all simultaneously-valid steps out at
+      once — `{"next_step": [s.value for s in valid]}` — instead of asking
+      `SupervisorAgent` to pick one. LangGraph's conditional-edge routing
+      natively supports a list return (confirmed by reading
+      `StateGraph.add_conditional_edges`'s source: `path`'s return type is
+      `Hashable | list[Hashable]`), and its sync `Pregel` executor runs
+      every ready node of one superstep through a real `ThreadPoolExecutor`
+      (`langgraph.pregel.executor`) — genuine concurrent execution for
+      these network-bound calls, not just batched sequential ones. Safe
+      without any new reducers: the 5 nodes each write to a different
+      top-level state key (`flights`/`hotels`/`attractions`/`restaurants`/
+      `weather`); `completed_steps`/`errors` already used an `operator.add`
+      reducer (Week 4) for exactly this kind of multi-writer merge.
+      `PlanningState.next_step` widened from `str` to `str | list[str]`;
+      `_route_from_supervisor` and `app.py`'s existing
+      `for node_name, output in chunk.items()` needed no changes — both
+      were already written generically enough
+- [x] Removed the now-dead code this made possible: `SupervisorAgent` used
+      to make a real GPT-4o structured-output call to break ties between
+      simultaneously-valid steps — pure cost/latency, since the 5 search
+      tools don't depend on each other and their order never affected
+      correctness. With the graph itself handling that case by fanning out
+      instead of asking for an order, `SupervisorAgent.decide_next` is now
+      just `determine_valid_steps(state)[0]` — no `ChatOpenAI`, no retries,
+      no LLM calls, ever
+- [x] **Live-tested for correctness**, not just timed: a real run's
+      `graph.stream()` chunks, timestamped, showed all 5 search nodes
+      completing between t=2.75s and t=6.10s (a 3.35s span) even though
+      their own step durations summed to ~19.7s — direct proof of real
+      wall-clock overlap, not an artifact of caching. No errors, no
+      checkpoint-write conflicts, every field populated correctly across
+      several real runs against live APIs
+- [x] **Measured speedup** (`scripts/week20_parallel_benchmark.py`, real
+      APIs, caching disabled so both modes pay full network latency):
+      direct sequential calls to the 5 search tools averaged **10.62s**
+      across 2 destinations; concurrent calls (a `ThreadPoolExecutor`,
+      mirroring what LangGraph's own executor does internally) averaged
+      **3.64s** — a **2.92x speedup**. In a full end-to-end run with
+      caching enabled, the 5 search steps' own durations summed to
+      **19.74s** of work compressed into a search phase that took **~3.35s**
+      of the run's **46.80s** total wall time
+- [x] **Fixed a real, related bug found while auditing Google Maps API
+      usage for the "reduce API calls via batching/caching" deliverable**:
+      `DistanceMatrixTool`/`TravelTimeEstimator` already batch and cache
+      (Week 9/11 — `MAX_ELEMENTS_PER_REQUEST`, 30-day Redis TTL), but
+      `HotelSearchTool._geocode_fallback()` (Week 13's "Null Island" fix)
+      called the Geocoding API directly with no caching at all, despite
+      `HotelSearchTool` already holding a `Cache` instance for its other
+      lookups. Every mock-hotel fallback (Booking.com's RapidAPI quota is
+      frequently exhausted — a known, previously-documented issue, and hit
+      repeatedly again live-testing this very week) re-geocoded the same
+      handful of cities from scratch. Now cached on `location` alone
+      (city coordinates don't change day to day, unlike the hotel search
+      itself, which is also keyed by dates) with the same 24h TTL the file
+      already declared but never used for this
+- [x] **Semantic caching** for `PreferenceParser`
+      (`utils/semantic_cache.py`): catches paraphrases of the same request
+      ("5 days in Paris under $3000" vs "Paris trip for 5 days, budget
+      $3000") that exact-key caching misses, via cosine similarity over
+      `text-embedding-3-small` embeddings — a custom ~100-line
+      implementation (a bounded JSON list per namespace in Redis, linear
+      cosine-similarity scan) rather than GPTCache, since a real vector
+      index is infrastructure this project doesn't otherwise need for one
+      hot path with a few hundred entries at most
+- [x] **A real threshold-calibration finding from live-testing**, worth
+      documenting honestly rather than shipping a guessed number: naive
+      intuition suggests paraphrases of the same request should embed
+      with near-1.0 cosine similarity. Measured against real
+      `text-embedding-3-small` output, a genuine same-trip paraphrase
+      scored **~0.82**, while a *different destination* with the same
+      budget/dates scored **~0.78** — too close together to separate with
+      any single similarity threshold, and a case adding a real new fact
+      (origin + traveler count) scored **~0.83**, *higher* than the
+      genuine paraphrase. Whole-text embedding similarity alone is not a
+      safe proxy for "would parse to the same result" in a domain with
+      several independent structured fields. Fixed by adding `guard`, a
+      required exact-match string alongside the similarity check:
+      `PreferenceParser._cache_guard` combines the reference date (date
+      resolution like "next month" depends on it) with the set of digit
+      tokens and capitalized words (city/month names, in practice) found
+      in the text — two texts only share a cache entry if their numbers
+      and named entities match exactly *and* their embeddings are
+      similar. The similarity threshold (0.80) now only has to reject
+      genuinely unrelated text (measured ~0.47), which it does with a
+      wide margin; digits/entities carry the correctness burden
+- [x] Live-verified the calibrated design end-to-end: parsing "5 days in
+      Paris under $3000 starting July 2026" then a reworded paraphrase of
+      the same request consumed **471 tokens, then 0** (a real cache hit —
+      no LLM call at all). The same digits with a different destination
+      ("...in Tokyo...") correctly missed and consumed 471 tokens for a
+      real LLM call; a request adding origin and traveler count correctly
+      missed too (493 tokens) instead of silently dropping those fields
+      from a stale cached parse
+- [x] 22 new/updated backend tests: `test_semantic_cache.py` (cosine
+      similarity, guard matching/eviction, TTL, using synthetic vectors
+      the test controls directly rather than real embeddings);
+      `test_preference_parser.py` additions for cache hit/miss and guard
+      behavior; `test_hotel_search.py` additions for the geocode-caching
+      fix; `test_supervisor.py` rewritten (no more LLM branch to test);
+      586 backend tests passing (11 skip without local Postgres, matching
+      Weeks 18-19)
+
 ## Setup
 
 ```bash

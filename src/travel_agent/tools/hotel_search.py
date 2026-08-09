@@ -206,7 +206,18 @@ class HotelSearchTool:
         best-effort attempt, no retries: this only runs after the primary
         Booking.com lookup has already failed, so it shouldn't add its own
         retry delay on top before falling back to (0.0, 0.0) as a last resort.
+
+        Cached on `location` alone (unlike `search`'s cache key, which also
+        includes dates): a city's geocoded center doesn't change day to day,
+        and this fallback fires on every Booking.com quota exhaustion for the
+        same handful of destinations, so an uncached call here was a real,
+        avoidable source of repeat Geocoding API traffic (Week 20 finding —
+        every other Google Maps call site in the project was already cached).
         """
+        cache_key = f"geocode:{location}"
+        if cached := self._cache.get(cache_key):
+            return cached[0], cached[1]
+
         try:
             resp = requests.get(
                 GEOCODE_URL,
@@ -217,7 +228,9 @@ class HotelSearchTool:
             results = resp.json().get("results") or []
             if results:
                 loc = results[0]["geometry"]["location"]
-                return loc["lat"], loc["lng"]
+                coords = (loc["lat"], loc["lng"])
+                self._cache.set(cache_key, list(coords), CACHE_TTL_SECONDS)
+                return coords
         except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
             logger.warning("Geocoding fallback failed for %s: %s", location, exc)
         return 0.0, 0.0

@@ -43,7 +43,11 @@ class PlanningState(TypedDict, total=False):
     budget_evaluation: dict | None
     map_html: str | None
     pdf_path: str | None
-    next_step: str
+    # A single step name normally, or a list of step names when the
+    # supervisor fans multiple mutually-independent search-phase tools out
+    # to run in the same LangGraph superstep (Week 20) — see
+    # `make_supervisor_node`/`_route_from_supervisor` in graph.py.
+    next_step: str | list[str]
     completed_steps: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
 

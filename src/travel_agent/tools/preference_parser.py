@@ -16,15 +16,27 @@ was confident about onto the existing session's preferences) does not.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from travel_agent.config import settings
 from travel_agent.models.core import BudgetTier, Pace, TravelPreferences, TripStyle
 from travel_agent.observability.metrics import record_llm_usage
+from travel_agent.utils.semantic_cache import SemanticCache
+
+_DIGIT_RE = re.compile(r"\d+")
+# Rough proper-noun heuristic (capitalized words) - imperfect (it also
+# catches an ordinary sentence-initial capital, e.g. "Two of us..."), but
+# that only ever makes the guard MORE restrictive (an extra token to match),
+# never less safe. Needed because embedding similarity alone can't be
+# trusted to separate "Paris" from "Tokyo" - see the guard docstring below
+# and `SemanticCache`'s DEFAULT_SIMILARITY_THRESHOLD comment for the real
+# numbers from live-testing that motivated this.
+_PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-zA-Z]*\b")
 
 _SYSTEM_PROMPT = """You extract structured travel-planning details from a user's natural \
 language request. Today's date is {today}. Resolve relative dates ("next month", "in July", \
@@ -57,7 +69,12 @@ class _ParsedFields(BaseModel):
 class PreferenceParser:
     """Wraps an LLM with structured output to turn free text into `TravelPreferences`."""
 
-    def __init__(self, model: str | None = None, temperature: float = 0.0) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        temperature: float = 0.0,
+        semantic_cache: SemanticCache | None = None,
+    ) -> None:
         self._model = model or settings.openai_model
         self._llm = ChatOpenAI(
             model=self._model,
@@ -72,6 +89,35 @@ class PreferenceParser:
             # the original raise-on-failure behavior tenacity's retry here
             # depends on.
         ).with_structured_output(_ParsedFields, include_raw=True)
+        # Week 20: catches paraphrases of the same request ("5 days in Paris
+        # under $3000" vs "a five-day Paris trip, $3000 budget") that exact
+        # caching would miss, without an extra network round trip on a miss
+        # (embedding happens locally in this call, same request either way).
+        # text-embedding-3-small: cheap enough (~$0.02/1M tokens) that even a
+        # 100% miss rate costs far less than the LLM call it might save.
+        self._embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small", api_key=settings.openai_api_key or None
+        )
+        self._semantic_cache = semantic_cache or SemanticCache(
+            "preference_parser", embed=lambda text: self._embeddings.embed_query(text)
+        )
+
+    @staticmethod
+    def _cache_guard(text: str, reference_date: date) -> str:
+        """A semantic-cache hit is only safe when it can't silently swap in
+        the wrong destination, budget, or date - two texts embedding as
+        "similar" doesn't mean any of those actually match (live-tested:
+        "5 days in Paris under $3000" vs "5 days in Tokyo under $3000"
+        scored ~0.78 cosine similarity, uncomfortably close to ~0.82 for a
+        genuine same-trip paraphrase - see SemanticCache's threshold
+        comment). Digits and capitalized words (city/month names, in
+        practice) are compared as sets, not raw substrings, so word order
+        doesn't matter but the actual facts must. `reference_date` is
+        included because the same text ("next month") resolves to a
+        different real date on a different day."""
+        digits = sorted(set(_DIGIT_RE.findall(text)))
+        proper_nouns = sorted({w.lower() for w in _PROPER_NOUN_RE.findall(text)})
+        return f"{reference_date.isoformat()}:{','.join(digits)}:{','.join(proper_nouns)}"
 
     @retry(
         stop=stop_after_attempt(3),
@@ -79,6 +125,10 @@ class PreferenceParser:
         reraise=True,
     )
     def _invoke(self, text: str, reference_date: date) -> _ParsedFields:
+        guard = self._cache_guard(text, reference_date)
+        if cached := self._semantic_cache.get(text, guard=guard):
+            return _ParsedFields(**cached)
+
         messages = [
             ("system", _SYSTEM_PROMPT.format(today=reference_date.isoformat())),
             ("human", text),
@@ -90,6 +140,7 @@ class PreferenceParser:
         raw = response.get("raw")
         if raw is not None:
             record_llm_usage(self._model, getattr(raw, "usage_metadata", None))
+        self._semantic_cache.set(text, parsed.model_dump(mode="json"), guard=guard)
         return parsed
 
     def parse(self, text: str, reference_date: date | None = None) -> TravelPreferences:

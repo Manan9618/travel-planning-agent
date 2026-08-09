@@ -167,6 +167,46 @@ def test_mock_hotel_falls_back_to_null_island_when_geocoding_also_fails(fake_cac
 
 
 @responses.activate
+def test_geocode_fallback_is_cached_across_searches(fake_cache):
+    """Week 20: a second mock-hotel fallback for the same city, even with
+    different stay dates (so `search`'s own cache key misses), must not
+    re-hit the Geocoding API - only the hotel search itself varies by date,
+    the city's coordinates don't."""
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    responses.add(
+        responses.GET,
+        GEOCODE_URL,
+        json={"results": [{"geometry": {"location": {"lat": 48.8566, "lng": 2.3522}}}]},
+        status=200,
+    )
+    tool = _tool(fake_cache)
+    first = tool.search("Paris", CHECK_IN, CHECK_OUT)
+    second = tool.search("Paris", date(2026, 10, 1), date(2026, 10, 3))
+    assert all(h.lat == 48.8566 and h.lng == 2.3522 for h in first + second)
+    geocode_calls = [c for c in responses.calls if c.request.url.startswith(GEOCODE_URL)]
+    assert len(geocode_calls) == 1
+
+
+@responses.activate
+def test_geocode_fallback_failure_is_not_cached(fake_cache):
+    """A transient geocoding failure shouldn't poison the cache for 24h -
+    only a successful lookup is worth remembering."""
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    responses.add(responses.GET, GEOCODE_URL, json={"results": []}, status=200)
+    responses.add(
+        responses.GET,
+        GEOCODE_URL,
+        json={"results": [{"geometry": {"location": {"lat": 48.8566, "lng": 2.3522}}}]},
+        status=200,
+    )
+    tool = _tool(fake_cache)
+    first = tool.search("Paris", CHECK_IN, CHECK_OUT)
+    second = tool.search("Paris", date(2026, 10, 1), date(2026, 10, 3))
+    assert all(h.lat == 0.0 and h.lng == 0.0 for h in first)
+    assert all(h.lat == 48.8566 and h.lng == 2.3522 for h in second)
+
+
+@responses.activate
 def test_no_hotels_in_results_falls_back_to_mock(fake_cache):
     responses.add(responses.GET, DEST_URL, json=_dest_body(), status=200)
     responses.add(responses.GET, HOTELS_URL, json=_hotels_body([]), status=200)
