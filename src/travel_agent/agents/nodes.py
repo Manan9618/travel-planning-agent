@@ -23,6 +23,7 @@ from travel_agent.agents.state import PlanningState, PlanningStep
 from travel_agent.models.core import (
     Attraction,
     BudgetEvaluation,
+    BudgetTier,
     FlightOption,
     HotelOption,
     Itinerary,
@@ -126,8 +127,13 @@ def make_search_hotels_node(tool: HotelSearchTool) -> Node:
         prefs = state["preferences"]
         try:
             check_in, check_out = _trip_dates(prefs)
+            budget_tier = BudgetTier(prefs["budget_tier"]) if prefs.get("budget_tier") else None
             results = tool.search(
-                prefs["destination"], check_in, check_out, adults=prefs.get("travelers", 1)
+                prefs["destination"],
+                check_in,
+                check_out,
+                adults=prefs.get("travelers", 1),
+                budget_tier=budget_tier,
             )
             return {
                 "hotels": [h.model_dump(mode="json") for h in results],

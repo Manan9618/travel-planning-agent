@@ -17,6 +17,7 @@ from travel_agent.agents.nodes import (
 )
 from travel_agent.models.core import (
     Attraction,
+    BudgetTier,
     Conflict,
     DayPlan,
     FlightOption,
@@ -138,6 +139,22 @@ def test_search_hotels_node_exception_records_error():
     result = node({"preferences": BASE_PREFS})
     assert result["hotels"] == []
     assert "down" in result["errors"][0]
+
+
+def test_search_hotels_node_passes_budget_tier_through():
+    tool = MagicMock()
+    tool.search.return_value = []
+    node = make_search_hotels_node(tool)
+    node({"preferences": {**BASE_PREFS, "budget_tier": "luxury"}})
+    assert tool.search.call_args.kwargs["budget_tier"] == BudgetTier.LUXURY
+
+
+def test_search_hotels_node_no_budget_tier_passes_none():
+    tool = MagicMock()
+    tool.search.return_value = []
+    node = make_search_hotels_node(tool)
+    node({"preferences": BASE_PREFS})  # BASE_PREFS has no budget_tier key
+    assert tool.search.call_args.kwargs["budget_tier"] is None
 
 
 # --- find_attractions ---------------------------------------------------

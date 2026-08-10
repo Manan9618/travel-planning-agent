@@ -3,6 +3,7 @@ from datetime import date
 import responses
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
+from travel_agent.models.core import BudgetTier
 from travel_agent.tools.hotel_search import HotelSearchTool
 
 DEST_URL = "https://booking-com15.p.rapidapi.com/api/v1/hotels/searchDestination"
@@ -271,3 +272,60 @@ def test_rating_within_booking_com_0_to_10_scale(fake_cache):
     )
     results = _tool(fake_cache).search("Paris", CHECK_IN, CHECK_OUT)
     assert results[0].rating == 9.6
+
+
+# --- mock-hotel pricing scaled by budget tier (Week 22) --------------------
+
+
+@responses.activate
+def test_mock_hotel_price_scales_up_for_luxury_tier(fake_cache):
+    # Real bug this guards against, found evaluating Week 12's baseline: a
+    # flat mock price regardless of tier massively underspent luxury
+    # budgets (the 3 worst budget_accuracy scores were all luxury
+    # honeymoons), since the mock-hotel fallback fires whenever Booking.com's
+    # RapidAPI quota is exhausted - a frequent, documented occurrence.
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    backpacker = _tool(fake_cache).search(
+        "Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.BACKPACKER
+    )
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    luxury = _tool(fake_cache).search("Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.LUXURY)
+
+    assert all(h.is_mock_data for h in backpacker)
+    assert all(h.is_mock_data for h in luxury)
+    assert min(h.price_per_night for h in luxury) > min(h.price_per_night for h in backpacker)
+
+
+@responses.activate
+def test_mock_hotel_price_unspecified_tier_matches_mid_range(fake_cache):
+    # No budget_tier passed at all must behave exactly as before this week's
+    # change (mid-range's base price is unchanged) - a real behavioral
+    # backward-compatibility guarantee, not just a coincidence of numbers.
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    unspecified = _tool(fake_cache).search("Paris", CHECK_IN, CHECK_OUT)
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    mid_range = _tool(fake_cache).search(
+        "Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.MID_RANGE
+    )
+
+    assert [h.price_per_night for h in unspecified] == [h.price_per_night for h in mid_range]
+
+
+@responses.activate
+def test_different_tiers_at_the_same_destination_are_cached_separately(fake_cache):
+    tool = _tool(fake_cache)
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    backpacker_first = tool.search("Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.BACKPACKER)
+
+    # Same tier again: must be served from cache, not a second real call -
+    # nothing re-stubbed, so this would raise if it weren't a cache hit.
+    backpacker_second = tool.search("Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.BACKPACKER)
+    assert [h.price_per_night for h in backpacker_second] == [
+        h.price_per_night for h in backpacker_first
+    ]
+
+    # A different tier at the same destination/dates must NOT reuse the
+    # backpacker cache entry - it needs (and gets) its own real call.
+    responses.add(responses.GET, DEST_URL, json={"status": False, "data": []}, status=200)
+    luxury = tool.search("Paris", CHECK_IN, CHECK_OUT, budget_tier=BudgetTier.LUXURY)
+    assert min(h.price_per_night for h in luxury) > min(h.price_per_night for h in backpacker_first)

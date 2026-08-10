@@ -237,7 +237,14 @@ class ItineraryBuilder:
             )
         )
 
-        dinner = self._pick(restaurants, 0)
+        # -1 (the last restaurant), not 0: the first full day's lunch always
+        # starts its own rotation at index 0 (`day_index * 2` below, with
+        # day_index=0) - picking index 0 here too guaranteed the arrival
+        # day's dinner and the very next day's lunch were always the exact
+        # same restaurant, on every itinerary this ever built. Real bug found
+        # via Week 22's simulated user study: 3 of 5 independent personas
+        # flagged a repeated restaurant unprompted.
+        dinner = self._pick(restaurants, -1)
         if dinner and checkin_start.time() < DINNER_SLOT[1]:
             start, end = self._next_slot(
                 checkin_start,

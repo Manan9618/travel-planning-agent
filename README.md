@@ -1197,6 +1197,84 @@ activities", landing on nonsense results).
       no prior test coverage at all). 609 backend tests passing (11 skip
       without local Postgres); 70 frontend tests passing
 
+**Phase 6, Week 22 — Evaluation, Benchmarking & Improvements** — done
+
+Full methodology, per-dimension before/after table, and honest limitations:
+[`docs/EVALUATION_REPORT.md`](docs/EVALUATION_REPORT.md). Blog post draft:
+[`docs/BLOG_POST_DRAFT.md`](docs/BLOG_POST_DRAFT.md). The plan document
+itself is now saved on disk too: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
+(previously only referenced, never actually present in the repo).
+
+- [x] **Final evaluation, 30 scenarios** (`scripts/final_evaluation.py`),
+      extending Week 12's 25 with 5 more — including the first-ever coverage
+      of the 2 `TripStyle`s the plan names but Week 12 never exercised
+      (`business`, `road_trip`) — reusing Week 12's rubric unchanged
+      (`ItineraryEvaluator` + `ItineraryJudge`) so the runs are genuinely
+      comparable. A fresh 30-scenario baseline (system exactly as Week 21
+      left it) scored **5.51/10**, confirming zero drift from Week 12's
+      original 5.52/10 across 9 weeks of unrelated work
+- [x] **Fixed the 2 root causes Week 12 diagnosed but never fixed**:
+      `variety` (2.48 → **4.41**/10) — Serper's attraction API returns the
+      generic `"Tourist attraction"` category for nearly everything; new
+      `attraction_categorizer.classify_category()` derives a real category
+      from the name via keyword matching (same approach Week 7's
+      `weather_matcher.py` uses for indoor/outdoor), an 11-category
+      taxonomy. `budget_accuracy` (3.91 → **4.88**/10) — the mock-hotel
+      fallback (fires whenever Booking.com's quota is exhausted, which it
+      was for every destination this week) priced every `BudgetTier`
+      identically; now scaled per tier
+- [x] **A real recalibration story, documented honestly rather than
+      smoothed over**: the first budget-tier price table (backpacker
+      $35/mid-range $90/luxury $280) measurably *worsened* every backpacker
+      scenario while fixing luxury — re-measured, not assumed. Root cause:
+      `budget_adherence_score` penalizes underspending as much as
+      overspending, and this evaluation's cost model only counts hotel+food
+      (no flight cost), so every tier was already underspending at the
+      original flat $90 — lowering backpacker's price further only widened
+      that gap. Recalibrated from real spend deltas: backpacker/mid-range
+      keep $90 (no regression), luxury raised further, to $650. Same shape
+      of lesson as Week 20's semantic-cache threshold: measure before
+      trusting a plausible-looking fix
+- [x] **Found and fixed a bug the first fix introduced**: a combined
+      `"Zoo, Aquarium & Wildlife"` category label put the word "aquarium"
+      (an indoor keyword to Week 7's `weather_matcher.py`) into the text for
+      every zoo too (an outdoor keyword) — silently reclassifying every
+      outdoor zoo as indoor. Found by checking the new categorizer against
+      `weather_matcher`'s own keyword lists as a matter of course, not
+      because anything failed. Split into 2 categories; added a permanent
+      regression test asserting no category label this module can ever
+      return contains both an indoor and outdoor keyword
+- [x] **Simulated user study** (`scripts/simulated_user_study.py`) — the
+      plan's "5 friends/family use the app" with no real testers available
+      to recruit. Explicitly labeled as simulation everywhere it's reported,
+      never as real user research: 5 diverse LLM personas each drove the
+      real pipeline end to end (genuine NLU parsing of their own
+      natural-language request, real API calls) and gave first-person,
+      explicitly-not-uniformly-positive feedback
+- [x] **The simulated study caught a real bug the 10-dimension rubric
+      never could**: 3 of 5 personas independently flagged a repeated
+      restaurant, unprompted. Traced to `ItineraryBuilder`: the arrival
+      day's dinner and the first full day's lunch each independently picked
+      `restaurants[0]`, with no awareness of each other — every itinerary
+      this agent has built since Week 5 repeated a restaurant on day one.
+      Confirmed directly (a real Sydney business-trip run scheduled
+      "Hustlers.Syd" for both Day 1 dinner and Day 2 lunch) before fixing.
+      One-line fix (arrival dinner now picks the *last* restaurant, not the
+      first) plus a regression test. Re-ran the study after the fix: the
+      repeated-restaurant complaint is gone from every persona's feedback;
+      average satisfaction moved 4.6 → 4.8/10 (modest — each persona
+      surfaced a different remaining gap once that one was fixed, documented
+      as real future work: `RestaurantFinderTool` isn't budget-tier-aware,
+      no explicit after-dark scheduling for "see the Northern Lights"-style
+      requests, no business-trip meeting-time awareness)
+- [x] 23 new tests: `test_attraction_categorizer.py` (17, new file,
+      including a regression test that checks every category label against
+      `weather_matcher`'s own keyword lists); `test_hotel_search.py` (3,
+      tier-scaling + cache-key isolation per tier); `test_agent_nodes.py`
+      (2, `budget_tier` threading); `test_itinerary_builder.py` (1, the
+      arrival-day/first-full-day restaurant collision). 632 backend tests
+      passing (11 skip without local Postgres)
+
 ## Setup
 
 ```bash

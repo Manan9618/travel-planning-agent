@@ -154,6 +154,25 @@ def test_arrival_day_skips_dinner_when_arrival_too_late():
     assert not any(i.activity_type == "restaurant" for i in day1.items)
 
 
+def test_arrival_day_dinner_does_not_repeat_the_first_full_days_lunch():
+    # Real bug found via Week 22's simulated user study (3 of 5 personas
+    # independently flagged a repeated restaurant): the arrival day's dinner
+    # and the first full day's lunch both used to pick restaurants[0], since
+    # each picks independently starting its own rotation at index 0.
+    itinerary = _builder().build(
+        _prefs(duration=3), _hotel(), ATTRACTIONS, RESTAURANTS, flight=None
+    )
+    arrival_dinner = next(
+        i.title for i in itinerary.days[0].items if i.activity_type == "restaurant"
+    )
+    first_full_day_lunch = next(
+        i.title
+        for i in itinerary.days[1].items
+        if i.activity_type == "restaurant" and i.time_slot == "afternoon"
+    )
+    assert arrival_dinner != first_full_day_lunch
+
+
 # --- full days -----------------------------------------------------------
 
 

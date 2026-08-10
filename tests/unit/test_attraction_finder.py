@@ -33,7 +33,10 @@ def test_happy_path_parses_fields(fake_cache):
     )
     results = _tool(fake_cache).search("London")
     assert results[0].name == "Tower Bridge"
-    assert results[0].category == "Tourist attraction"
+    # Week 22: category is derived from the name (classify_category), not
+    # passed through Serper's own near-always-generic "Tourist attraction" -
+    # see test_attraction_categorizer.py for the classifier's own coverage.
+    assert results[0].category == "Landmark & Viewpoint"
     assert results[0].rating == 4.8
     assert results[0].lat == 51.5
     assert not results[0].is_mock_data
