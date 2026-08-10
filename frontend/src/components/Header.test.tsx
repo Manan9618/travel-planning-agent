@@ -50,6 +50,8 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={false}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     expect(screen.getByText('AI Travel Planning Agent')).toBeInTheDocument()
@@ -63,6 +65,8 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={true}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     expect(screen.getByText(/Paris/)).toBeInTheDocument()
@@ -77,6 +81,8 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={false}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     expect(screen.queryByText('New trip')).not.toBeInTheDocument()
@@ -92,6 +98,8 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={true}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     await user.click(screen.getByText('New trip'))
@@ -106,6 +114,8 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={true}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     expect(screen.getByRole('button', { name: 'Export PDF' })).toBeDisabled()
@@ -121,6 +131,8 @@ describe('Header', () => {
         onDownloadPdf={onDownloadPdf}
         pdfAvailable={true}
         hasTurns={true}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     await user.click(screen.getByRole('button', { name: 'Export PDF' }))
@@ -135,8 +147,28 @@ describe('Header', () => {
         onDownloadPdf={vi.fn()}
         pdfAvailable={false}
         hasTurns={true}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
       />,
     )
     expect(screen.getByText(/\/\$1,000/)).toBeInTheDocument()
+  })
+
+  it('calls onLogout when Log out is clicked', async () => {
+    const onLogout = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <Header
+        itinerary={null}
+        onNewTrip={vi.fn()}
+        onDownloadPdf={vi.fn()}
+        pdfAvailable={false}
+        hasTurns={false}
+        userEmail="traveler@example.com"
+        onLogout={onLogout}
+      />,
+    )
+    await user.click(screen.getByText('Log out'))
+    expect(onLogout).toHaveBeenCalled()
   })
 })

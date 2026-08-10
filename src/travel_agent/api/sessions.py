@@ -19,6 +19,15 @@ below is the real thing, used automatically whenever `DATABASE_URL` is set
 for plain `make serve`, the same "degrades gracefully to local-only when the
 real infra isn't there" pattern already used for Redis caching everywhere
 else in this project.
+
+`sessions.user_id` (added alongside real user accounts, see `api/users.py`
+and `api/auth.py`) links a session to the account that created it, so
+`GET /plan/{id}` and friends can enforce that a user only ever sees their
+own trips. Nullable, and migrated onto pre-existing tables additively (see
+`_add_user_id_column_sqlite`) rather than requiring a fresh database —
+sessions created before accounts existed simply have no owner and become
+unreachable through the now-authenticated endpoints, which is the correct,
+expected consequence of adding real per-user ownership after the fact.
 """
 
 from __future__ import annotations
@@ -52,6 +61,21 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
+def _add_user_id_column_sqlite(conn: sqlite3.Connection) -> None:
+    # `CREATE TABLE IF NOT EXISTS` above only helps a brand-new database —
+    # every `sessions.sqlite` from before real user accounts existed already
+    # has a `sessions` table with no `user_id` column, and SQLite has no
+    # `ADD COLUMN IF NOT EXISTS`. Idempotent by catching the one error
+    # "already has this column" produces, not by checking first (avoids a
+    # TOCTOU race, though this store is already single-connection/locked).
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+
+
 @dataclass
 class SessionRecord:
     session_id: str
@@ -60,6 +84,7 @@ class SessionRecord:
     parent_session_id: str | None
     created_at: str
     updated_at: str
+    user_id: str | None = None
 
 
 @dataclass
@@ -82,15 +107,23 @@ class SessionStore:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
+            _add_user_id_column_sqlite(self._conn)
 
-    def create(self, session_id: str, raw_text: str, parent_session_id: str | None = None) -> None:
+    def create(
+        self,
+        session_id: str,
+        raw_text: str,
+        parent_session_id: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
         now = _now()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO sessions "
-                "(session_id, status, raw_text, parent_session_id, created_at, updated_at) "
-                "VALUES (?, 'running', ?, ?, ?, ?)",
-                (session_id, raw_text, parent_session_id, now, now),
+                "(session_id, status, raw_text, parent_session_id, created_at, updated_at, "
+                "user_id) "
+                "VALUES (?, 'running', ?, ?, ?, ?, ?)",
+                (session_id, raw_text, parent_session_id, now, now, user_id),
             )
             self._conn.commit()
 
@@ -178,15 +211,25 @@ class PostgresSessionStore:
         with self._lock:
             self._conn.execute(_POSTGRES_SESSIONS_TABLE)
             self._conn.execute(_POSTGRES_EVENTS_TABLE)
+            # Postgres, unlike SQLite, supports ADD COLUMN IF NOT EXISTS
+            # directly - no try/except migration dance needed here.
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT")
 
-    def create(self, session_id: str, raw_text: str, parent_session_id: str | None = None) -> None:
+    def create(
+        self,
+        session_id: str,
+        raw_text: str,
+        parent_session_id: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
         now = _now()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO sessions "
-                "(session_id, status, raw_text, parent_session_id, created_at, updated_at) "
-                "VALUES (%s, 'running', %s, %s, %s, %s)",
-                (session_id, raw_text, parent_session_id, now, now),
+                "(session_id, status, raw_text, parent_session_id, created_at, updated_at, "
+                "user_id) "
+                "VALUES (%s, 'running', %s, %s, %s, %s, %s)",
+                (session_id, raw_text, parent_session_id, now, now, user_id),
             )
 
     def get(self, session_id: str) -> SessionRecord | None:

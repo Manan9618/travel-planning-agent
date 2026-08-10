@@ -1427,6 +1427,58 @@ itself is now saved on disk too: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
       referenced again here since Week 23's own artifacts link to it
       throughout)
 
+**Post-Plan — Real User Accounts & PDF Redesign** — done
+
+Two features outside the original 24-week scope, added on request after a
+user shared a printed adventure-camp brochure as visual reference and asked
+for real accounts plus a more creative itinerary PDF.
+
+- [x] **Real user accounts**: JWT bearer-token auth (`PyJWT`, HS256) with
+      bcrypt-hashed passwords, a dual SQLite/PostgreSQL `UserStore` mirroring
+      the existing `SessionStore` pattern, and a new `user_id` column
+      additively migrated onto the pre-existing `sessions` table (idempotent
+      `ALTER TABLE`, safe against a real 23-week-old local `sessions.sqlite`
+      file). `POST /auth/register`, `POST /auth/login`, `GET /auth/me`; every
+      session-scoped endpoint (`/plan`, `/refine`, `/resume`, both `/export`
+      routes, the `/ws` stream) now requires a bearer token and enforces
+      per-user ownership, returning 404 — not 403 — for another user's
+      session so existence isn't leaked. `verify_api_key` (the Week 15
+      deployment-wide key) stays on every endpoint except the two auth
+      routes themselves, fixing a real bootstrap deadlock caught in
+      testing: an API-key-gated deployment could never register its first
+      user if registration also required a key
+- [x] **Frontend auth**: no router library exists in this app (state-based
+      tabs already cover navigation), so authentication is a state-based
+      gate rather than a new dependency — `AuthProvider`/`useAuth`
+      (`lib/useAuth.tsx`) holds the current user and validates a
+      `localStorage`-persisted token on load; unauthenticated visitors see
+      `AuthPage` (a combined login/register form) instead of the planner.
+      WebSocket auth travels as a `?token=` query param, since the browser
+      WebSocket API can't set an `Authorization` header
+- [x] **PDF redesign** (`tools/pdf_generator.py`): a colorful "Quick
+      Overview" badge row (duration/travelers/pace/style/budget
+      tier/estimated cost), a two-column "Inclusions & Exclusions" list
+      derived from what the itinerary actually contains (hotel, flights,
+      attraction/restaurant counts vs. a standard excluded-costs list), and
+      a "Packing Essentials" checklist driven by each day's real weather
+      forecast and trip style — rain gear only appears when a day's rain
+      probability crosses 40%, warm layers only below 12°C, swimwear only
+      for `TripStyle.BEACH` trips. Icon-style bullets are CSS-drawn dots,
+      not emoji glyphs — the Docker image only ships `fonts-liberation`,
+      which doesn't reliably cover symbol code points, so dots sidestep a
+      tofu-box risk real pictograms would carry. Still fully data-driven
+      per AI-planned trip, not the fixed single-package brochure it was
+      visually inspired by
+- [x] Live-verified both features against the real Dockerized stack: full
+      browser register → plan a trip → log out → log back in → wrong-password
+      rejection flow (via the `browser-automation` skill), and a real
+      WeasyPrint-rendered sample PDF inspected page-by-page as rasterized
+      images to confirm the new sections actually render correctly, not just
+      that their HTML strings contain the right substrings
+- [x] 693 backend tests passing (11 skip without local Postgres, up from
+      632 before this work: 45 new for auth/ownership, 16 new for the PDF
+      redesign), 84 frontend tests passing
+
 ## Setup
 
 ```bash

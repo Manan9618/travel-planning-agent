@@ -1,3 +1,6 @@
+import sqlite3
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
@@ -73,6 +76,54 @@ def test_event_payload_round_trips_nested_structures():
     payload = {"node": "build_itinerary", "output": {"itinerary": {"days": [1, 2, 3]}}}
     store.append_event("s1", "node_update", payload)
     assert store.get_events("s1")[0].payload == payload
+
+
+# --- user_id (real user accounts) ----------------------------------------
+
+
+def test_create_with_user_id_round_trips():
+    store = _store()
+    store.create("s1", "5 days in Paris", user_id="user-abc")
+    assert store.get("s1").user_id == "user-abc"
+
+
+def test_create_without_user_id_defaults_to_none():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    assert store.get("s1").user_id is None
+
+
+def test_user_id_column_is_added_additively_to_a_pre_existing_database():
+    # Real scenario this guards against: a sessions.sqlite file that existed
+    # before real user accounts did, with a `sessions` table and no
+    # `user_id` column at all. `CREATE TABLE IF NOT EXISTS` alone can't add
+    # a column to an existing table - this asserts the additive migration
+    # (`_add_user_id_column_sqlite`) actually runs and the store stays usable.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "legacy_sessions.sqlite")
+        legacy_conn = sqlite3.connect(db_path)
+        legacy_conn.execute(
+            "CREATE TABLE sessions ("
+            "session_id TEXT PRIMARY KEY, status TEXT NOT NULL, raw_text TEXT NOT NULL, "
+            "parent_session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        legacy_conn.execute(
+            "INSERT INTO sessions VALUES ('old-session', 'completed', 'trip', NULL, 'x', 'x')"
+        )
+        legacy_conn.commit()
+        legacy_conn.close()
+
+        store = SessionStore(db_path)  # must not raise despite the missing column
+        assert store.get("old-session").user_id is None
+        store.create("new-session", "another trip", user_id="user-abc")
+        assert store.get("new-session").user_id == "user-abc"
+
+
+def test_user_id_migration_is_idempotent_across_repeated_store_construction():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "sessions.sqlite")
+        SessionStore(db_path)
+        SessionStore(db_path)  # must not raise "duplicate column name"
 
 
 # --- build_session_store (Week 18: Postgres when DATABASE_URL is set) -----

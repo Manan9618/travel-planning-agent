@@ -2,6 +2,16 @@
 
 Exposes the LangGraph planning pipeline (Weeks 1-14) over HTTP + WebSocket:
 
+- `POST /auth/register` and `POST /auth/login` create/authenticate a real
+  account (bcrypt-hashed password, `api/users.py`) and return a signed JWT
+  bearer token (`api/auth.py`). Every session-scoped endpoint below requires
+  it (`Authorization: Bearer <token>`, or `?token=` on the WebSocket, which
+  can't set custom headers) and enforces that a session belongs to the
+  requesting user — a session created before accounts existed, or by a
+  different user, 404s rather than leaking that it exists. Separate from
+  `verify_api_key` (an older, optional, deployment-wide shared secret,
+  still supported and independent of per-user auth — both can be active
+  at once).
 - `POST /plan` starts a new planning run in the background and returns
   immediately (202 — see "async processing" below); `GET /plan/{session_id}`
   polls status/results.
@@ -49,7 +59,16 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from langgraph.graph.state import CompiledStateGraph
@@ -65,14 +84,27 @@ from travel_agent.agents.graph import (
     build_sqlite_checkpointer,
 )
 from travel_agent.agents.refinement import SEARCH_STEP_STATE_FIELD, build_refinement_seed
+from travel_agent.api.auth import (
+    create_access_token,
+    decode_access_token,
+    extract_bearer_token,
+    hash_password,
+    is_valid_email,
+    verify_password,
+)
 from travel_agent.api.schemas import (
+    AuthResponse,
+    LoginRequest,
     PlanRequest,
     PlanResponse,
     RefineRequest,
+    RegisterRequest,
     ResumeRequest,
     SessionStateResponse,
+    UserResponse,
 )
 from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
+from travel_agent.api.users import PostgresUserStore, UserRecord, UserStore, build_user_store
 from travel_agent.config import settings
 from travel_agent.models.core import Itinerary
 from travel_agent.observability.logging import (
@@ -90,6 +122,9 @@ logger = logging.getLogger(__name__)
 WS_POLL_INTERVAL_SECONDS = 0.2
 TERMINAL_EVENT_TYPES = {"done", "error", "awaiting_review"}
 PLAN_RATE_LIMIT = "10/minute"
+# Tighter than PLAN_RATE_LIMIT: login/register are the endpoints a
+# credential-stuffing or fake-account-spam attempt would actually hit.
+AUTH_RATE_LIMIT = "5/minute"
 
 
 def verify_api_key(request: Request) -> None:
@@ -102,6 +137,7 @@ def verify_api_key(request: Request) -> None:
 def create_app(
     graph: CompiledStateGraph | None = None,
     session_store: SessionStore | PostgresSessionStore | None = None,
+    user_store: UserStore | PostgresUserStore | None = None,
     narrator: ItineraryNarrator | None = None,
     parser: PreferenceParser | None = None,
 ) -> FastAPI:
@@ -138,8 +174,34 @@ def create_app(
         )
     )
     session_store = session_store or build_session_store(settings.database_url)
+    user_store = user_store or build_user_store(settings.database_url)
     narrator = narrator or ItineraryNarrator()
     parser = parser or PreferenceParser()
+
+    def get_current_user(authorization: str | None = Header(default=None)) -> UserRecord:
+        """FastAPI dependency: the authenticated user, from a real JWT
+        bearer token — separate from `verify_api_key` above (see its own
+        docstring). Any REST endpoint that reads/writes a specific user's
+        sessions takes this as a parameter (not just in `dependencies=`) so
+        its handler can use `current_user.user_id`. Defined up here, before
+        the routes below, since several of them reference it as a default
+        argument (`Depends(get_current_user)`), which Python evaluates once
+        at each route function's *definition* time, not at request time."""
+        token = extract_bearer_token(authorization)
+        user_id = decode_access_token(token)
+        user = user_store.get_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="user not found")
+        return user
+
+    def _get_owned_session(session_id: str, user_id: str) -> None:
+        """404 (never 403) for a session that doesn't exist OR belongs to
+        someone else — same reasoning REST APIs generally use for
+        per-owner resources: a 403 would confirm the session_id is real,
+        which is itself information a non-owner shouldn't get for free."""
+        record = session_store.get(session_id)
+        if record is None or record.user_id != user_id:
+            raise HTTPException(status_code=404, detail="session not found")
 
     limiter = Limiter(key_func=get_remote_address)
     app = FastAPI(
@@ -194,6 +256,66 @@ def create_app(
     )
     async def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    @app.post(
+        "/auth/register",
+        response_model=AuthResponse,
+        status_code=201,
+        tags=["auth"],
+        summary="Create an account",
+        description="Registers a new user (email + password, bcrypt-hashed — "
+        "never stored or logged in plaintext) and returns a bearer token, the "
+        "same as /auth/login would for that account immediately afterward. "
+        "Deliberately NOT behind `verify_api_key`, unlike every session-scoped "
+        "endpoint below — an API_KEY-protected deployment would otherwise lock "
+        "out registration itself, since there'd be no way to get a JWT to send "
+        "in the first place.",
+    )
+    @limiter.limit(AUTH_RATE_LIMIT)
+    async def register(request: Request, body: RegisterRequest) -> AuthResponse:
+        if not is_valid_email(body.email):
+            raise HTTPException(status_code=422, detail="invalid email address")
+        if user_store.get_by_email(body.email) is not None:
+            raise HTTPException(status_code=409, detail="email already registered")
+        user_id = str(uuid.uuid4())
+        user_store.create(user_id, body.email, hash_password(body.password))
+        return AuthResponse(
+            access_token=create_access_token(user_id), user_id=user_id, email=body.email.lower()
+        )
+
+    @app.post(
+        "/auth/login",
+        response_model=AuthResponse,
+        tags=["auth"],
+        summary="Log in",
+        description="Exchanges an existing account's email + password for a "
+        "bearer token — send it back as `Authorization: Bearer <token>` on "
+        "every session-scoped request. Also not behind `verify_api_key`, for "
+        "the same reason /auth/register isn't.",
+    )
+    @limiter.limit(AUTH_RATE_LIMIT)
+    async def login(request: Request, body: LoginRequest) -> AuthResponse:
+        user = user_store.get_by_email(body.email)
+        # Same error for "no such user" and "wrong password" - confirming an
+        # email is registered at all is its own small information leak.
+        if user is None or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="invalid email or password")
+        return AuthResponse(
+            access_token=create_access_token(user.user_id), user_id=user.user_id, email=user.email
+        )
+
+    @app.get(
+        "/auth/me",
+        response_model=UserResponse,
+        dependencies=[Depends(verify_api_key)],
+        tags=["auth"],
+        summary="Get the current user",
+        description="Returns the account for the bearer token sent — lets the "
+        "frontend validate a stored token and recover the user's email on "
+        "app load without re-decoding the JWT client-side.",
+    )
+    async def me(current_user: UserRecord = Depends(get_current_user)) -> UserResponse:
+        return UserResponse(user_id=current_user.user_id, email=current_user.email)
 
     def _config(session_id: str) -> dict:
         # LangGraph's default recursion_limit (25) counts each worker-step ->
@@ -325,9 +447,11 @@ def create_app(
         ),
     )
     @limiter.limit(PLAN_RATE_LIMIT)
-    async def plan(request: Request, body: PlanRequest) -> PlanResponse:
+    async def plan(
+        request: Request, body: PlanRequest, current_user: UserRecord = Depends(get_current_user)
+    ) -> PlanResponse:
         session_id = str(uuid.uuid4())
-        session_store.create(session_id, body.raw_text)
+        session_store.create(session_id, body.raw_text, user_id=current_user.user_id)
         asyncio.create_task(
             _drive_graph(
                 session_id, {"raw_text": body.raw_text, "errors": [], "completed_steps": []}
@@ -345,7 +469,10 @@ def create_app(
         "available so far (preferences, itinerary, budget evaluation, ...) for a "
         "session started by /plan or /refine. Safe to poll repeatedly.",
     )
-    async def get_plan(session_id: str) -> SessionStateResponse:
+    async def get_plan(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> SessionStateResponse:
+        _get_owned_session(session_id, current_user.user_id)
         return _state_response(session_id)
 
     @app.post(
@@ -358,9 +485,10 @@ def create_app(
         "unresolved budget or scheduling conflict — see the awaiting_review "
         "WebSocket event for details) with the traveler's approve/reject decision.",
     )
-    async def resume_plan(session_id: str, body: ResumeRequest) -> PlanResponse:
-        if session_store.get(session_id) is None:
-            raise HTTPException(status_code=404, detail="session not found")
+    async def resume_plan(
+        session_id: str, body: ResumeRequest, current_user: UserRecord = Depends(get_current_user)
+    ) -> PlanResponse:
+        _get_owned_session(session_id, current_user.user_id)
         session_store.update_status(session_id, "running")
         asyncio.create_task(_drive_graph(session_id, Command(resume={"approved": body.approved})))
         return PlanResponse(session_id=session_id, status="running")
@@ -383,9 +511,12 @@ def create_app(
         ),
     )
     @limiter.limit(PLAN_RATE_LIMIT)
-    async def refine(request: Request, body: RefineRequest) -> PlanResponse:
-        if session_store.get(body.session_id) is None:
-            raise HTTPException(status_code=404, detail="session not found")
+    async def refine(
+        request: Request,
+        body: RefineRequest,
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> PlanResponse:
+        _get_owned_session(body.session_id, current_user.user_id)
         existing_state = graph.get_state(_config(body.session_id)).values or {}
         existing_prefs = existing_state.get("preferences") or {}
 
@@ -416,7 +547,12 @@ def create_app(
                 )
 
         new_session_id = str(uuid.uuid4())
-        session_store.create(new_session_id, body.raw_text, parent_session_id=body.session_id)
+        session_store.create(
+            new_session_id,
+            body.raw_text,
+            parent_session_id=body.session_id,
+            user_id=current_user.user_id,
+        )
         seed = build_refinement_seed(body.raw_text, merged_preferences, existing_state, updates)
         reused = [
             step.value for step in SEARCH_STEP_STATE_FIELD if step.value in seed["completed_steps"]
@@ -435,7 +571,10 @@ def create_app(
         "completed — 404 until then.",
         response_class=FileResponse,
     )
-    async def export_pdf(session_id: str) -> FileResponse:
+    async def export_pdf(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> FileResponse:
+        _get_owned_session(session_id, current_user.user_id)
         pdf_path = (graph.get_state(_config(session_id)).values or {}).get("pdf_path")
         if not pdf_path or not Path(pdf_path).exists():
             raise HTTPException(status_code=404, detail="PDF not available for this session")
@@ -451,16 +590,35 @@ def create_app(
         "completed — 404 until then.",
         response_class=HTMLResponse,
     )
-    async def export_map(session_id: str) -> HTMLResponse:
+    async def export_map(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> HTMLResponse:
+        _get_owned_session(session_id, current_user.user_id)
         map_html = (graph.get_state(_config(session_id)).values or {}).get("map_html")
         if not map_html:
             raise HTTPException(status_code=404, detail="map not available for this session")
         return HTMLResponse(map_html)
 
     @app.websocket("/ws/{session_id}")
-    async def ws_stream(websocket: WebSocket, session_id: str) -> None:
+    async def ws_stream(
+        websocket: WebSocket, session_id: str, token: str | None = Query(default=None)
+    ) -> None:
         await websocket.accept()
-        if session_store.get(session_id) is None:
+        # Browsers' native WebSocket API can't set an Authorization header,
+        # so the bearer token travels as ?token=... instead - decode_access_token
+        # raises HTTPException on failure, which means nothing to a raw
+        # WebSocket, so it's translated into the same graceful
+        # error-then-close pattern the "session not found" case already uses.
+        try:
+            user_id = decode_access_token(
+                extract_bearer_token(f"Bearer {token}" if token else None)
+            )
+        except HTTPException:
+            await websocket.send_json({"type": "error", "message": "missing or invalid token"})
+            await websocket.close()
+            return
+        record = session_store.get(session_id)
+        if record is None or record.user_id != user_id:
             await websocket.send_json({"type": "error", "message": "session not found"})
             await websocket.close()
             return

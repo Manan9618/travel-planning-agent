@@ -23,6 +23,18 @@ both `photo_url` and `description` are normally filled in by the
 reuses them rather than re-fetching; a standalone `PDFGenerator` call (e.g.
 in tests) still works, falling back to its own Unsplash lookup for the
 photo and simply showing no description.
+
+Visual redesign (post-Week-23), inspired by a printed adventure-camp
+brochure the user shared as reference: a colorful "Quick Overview" badge row
+(duration/travelers/pace/style/estimated cost), a two-column "Inclusions &
+Exclusions" list, and a "Packing Essentials" checklist — all still derived
+from the actual planned trip (weather forecasts, trip style, pace, hotel and
+flight presence) rather than the fixed copy a real brochure would use, since
+this generator has to work for any AI-planned destination, not one curated
+package. Icon-style bullets are plain CSS-drawn dots rather than emoji glyphs
+— the Docker image only ships `fonts-liberation`, which doesn't reliably
+include symbol code points, so dots avoid a tofu-box risk that real pictogram
+characters would carry.
 """
 
 from __future__ import annotations
@@ -36,7 +48,14 @@ import qrcode
 import requests
 from weasyprint import HTML
 
-from travel_agent.models.core import BudgetEvaluation, DayPlan, Itinerary, ItineraryItem
+from travel_agent.models.core import (
+    BudgetEvaluation,
+    DayPlan,
+    Itinerary,
+    ItineraryItem,
+    Pace,
+    TripStyle,
+)
 from travel_agent.tools.budget_tracker import estimate_itinerary_cost
 from travel_agent.tools.travel_map_generator import day_color
 from travel_agent.tools.unsplash_photo import UnsplashPhotoTool
@@ -44,6 +63,10 @@ from travel_agent.tools.unsplash_photo import UnsplashPhotoTool
 logger = logging.getLogger(__name__)
 
 PHOTO_DOWNLOAD_TIMEOUT = 10
+
+# Quick Overview badges cycle through this palette by position, purely for
+# visual variety — no meaning is attached to which stat gets which color.
+_BADGE_COLORS = ["#2c5f8a", "#e08a3c", "#1f8a8a", "#7a5cc9", "#2f9e5b", "#c9765c"]
 
 _CSS = """
 @page { size: A4; margin: 2cm; }
@@ -90,6 +113,37 @@ section { page-break-inside: avoid; margin-bottom: 1.5em; }
 .item-title { font-weight: bold; }
 .item-description { color: #555; font-size: 9pt; margin-top: 2px; line-height: 1.35; }
 .item-cost { text-align: right; font-weight: bold; white-space: nowrap; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 0.5em; }
+.badge {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 3.4cm; padding: 0.5em 0.7em; border-radius: 10px; color: white; text-align: center;
+}
+.badge .badge-value { font-size: 13pt; font-weight: bold; line-height: 1.2; }
+.badge .badge-label {
+  font-size: 8pt; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.9;
+}
+.inclusion-exclusion h2 { border-left-color: #2f9e5b; }
+.packing h2 { border-left-color: #1f8a8a; }
+h3 { font-size: 11pt; margin: 0.6em 0 0.3em 0; }
+.two-col { display: flex; gap: 1.5em; }
+.two-col > div { flex: 1; }
+.dot-list { list-style: none; margin: 0; padding: 0; }
+.dot-list li { display: flex; align-items: flex-start; gap: 0.5em; padding: 3px 0; }
+.dot-list.two-col-list { display: flex; flex-wrap: wrap; }
+.dot-list.two-col-list li { width: 50%; box-sizing: border-box; padding-right: 0.5em; }
+.dot {
+  display: inline-block; width: 0.65em; height: 0.65em; border-radius: 50%;
+  margin-top: 0.4em; flex-shrink: 0;
+}
+.dot-included { background: #2f9e5b; }
+.dot-excluded { background: #c94f4f; }
+.dot-packing { background: #1f8a8a; }
+.footer-band {
+  margin-top: 2em; padding: 1em 1.5em; border-radius: 8px; text-align: center; color: white;
+  background: linear-gradient(135deg, #2c5f8a, #1f8a8a);
+}
+.footer-band .tagline { font-size: 13pt; font-weight: bold; margin: 0 0 0.2em 0; }
+.footer-band .subtext { font-size: 9pt; opacity: 0.85; margin: 0; }
 """
 
 
@@ -120,10 +174,14 @@ class PDFGenerator:
     ) -> str:
         sections = [
             self._cover_page(itinerary),
+            self._quick_overview_section(itinerary),
             self._executive_summary(itinerary),
+            self._inclusion_exclusion_section(itinerary),
             self._map_section(map_thumbnail_path, map_url),
             *[self._day_section(day, itinerary.preferences.destination) for day in itinerary.days],
+            self._packing_essentials_section(itinerary),
             self._budget_section(itinerary, budget_evaluation),
+            self._footer_section(),
         ]
         return f"<html><head><style>{_CSS}</style></head><body>{''.join(sections)}</body></html>"
 
@@ -203,6 +261,120 @@ class PDFGenerator:
 
         row_html = "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
         return f'<section class="summary"><h2>Trip Overview</h2><table>{row_html}</table></section>'
+
+    @staticmethod
+    def _quick_overview_section(itinerary: Itinerary) -> str:
+        prefs = itinerary.preferences
+        num_days = len(itinerary.days)
+        total_cost = estimate_itinerary_cost(itinerary)
+
+        stats = [
+            ("Duration", f"{num_days} day{'s' if num_days != 1 else ''}"),
+            ("Travelers", str(prefs.travelers)),
+            ("Pace", prefs.pace.value.title()),
+        ]
+        if prefs.trip_style:
+            stats.append(("Style", prefs.trip_style.value.replace("_", " ").title()))
+        if prefs.budget_tier:
+            stats.append(("Budget tier", prefs.budget_tier.value.replace("_", " ").title()))
+        stats.append(("Est. cost", f"${total_cost:,.0f}"))
+
+        badges_html = "".join(
+            f'<div class="badge" style="background:{_BADGE_COLORS[i % len(_BADGE_COLORS)]}">'
+            f'<span class="badge-value">{value}</span>'
+            f'<span class="badge-label">{label}</span></div>'
+            for i, (label, value) in enumerate(stats)
+        )
+        return (
+            f'<section class="quick-overview"><div class="badge-row">{badges_html}</div></section>'
+        )
+
+    @staticmethod
+    def _inclusion_exclusion_section(itinerary: Itinerary) -> str:
+        included = ["Full day-by-day itinerary & route map"]
+        if itinerary.hotel:
+            included.append(f"Accommodation: {itinerary.hotel.name}")
+        if itinerary.flights:
+            included.append("Round-trip flights")
+        num_attractions = sum(
+            1 for d in itinerary.days for i in d.items if i.activity_type == "attraction"
+        )
+        if num_attractions:
+            included.append(
+                f"{num_attractions} attraction visit{'s' if num_attractions != 1 else ''}"
+            )
+        num_restaurants = sum(
+            1 for d in itinerary.days for i in d.items if i.activity_type == "restaurant"
+        )
+        if num_restaurants:
+            included.append(
+                f"{num_restaurants} dining recommendation{'s' if num_restaurants != 1 else ''}"
+            )
+
+        excluded = [
+            "Personal expenses & shopping",
+            "Travel insurance",
+            "Visa & passport fees",
+            "Tips & gratuities",
+        ]
+
+        def _dot_list(items: list[str], dot_class: str) -> str:
+            return "".join(
+                f'<li><span class="dot {dot_class}"></span>{item}</li>' for item in items
+            )
+
+        included_html = _dot_list(included, "dot-included")
+        excluded_html = _dot_list(excluded, "dot-excluded")
+        return f"""
+        <section class="inclusion-exclusion">
+          <h2>Inclusions &amp; Exclusions</h2>
+          <div class="two-col">
+            <div><h3>Included</h3><ul class="dot-list">{included_html}</ul></div>
+            <div><h3>Not Included</h3><ul class="dot-list">{excluded_html}</ul></div>
+          </div>
+        </section>
+        """
+
+    @staticmethod
+    def _packing_essentials_section(itinerary: Itinerary) -> str:
+        prefs = itinerary.preferences
+        forecasts = [d.weather for d in itinerary.days if d.weather]
+
+        items = [
+            "Comfortable walking shoes",
+            "Phone charger & travel adapter",
+            "Valid ID / passport",
+        ]
+        if any(f.rain_probability >= 0.4 for f in forecasts):
+            items.append("Rain jacket or compact umbrella")
+        if any(f.temp_low_c < 12 for f in forecasts):
+            items.append("Warm layers / light jacket")
+        if any(f.temp_high_c > 28 for f in forecasts):
+            items.append("Sunscreen & sunglasses")
+            items.append("Light, breathable clothing")
+        if prefs.trip_style == TripStyle.BEACH:
+            items.append("Swimwear & beach towel")
+        if prefs.trip_style == TripStyle.ADVENTURE:
+            items.append("Daypack & basic first-aid kit")
+        if prefs.pace == Pace.PACKED:
+            items.append("Portable battery pack — long days ahead")
+        if prefs.dietary_restrictions:
+            items.append(f"Dietary needs to flag: {', '.join(prefs.dietary_restrictions)}")
+
+        items_html = "".join(f'<li><span class="dot dot-packing"></span>{i}</li>' for i in items)
+        return (
+            '<section class="packing"><h2>Packing Essentials</h2>'
+            f'<ul class="dot-list two-col-list">{items_html}</ul></section>'
+        )
+
+    @staticmethod
+    def _footer_section() -> str:
+        return """
+        <section class="footer-band">
+          <p class="tagline">Have an amazing trip!</p>
+          <p class="subtext">Crafted by Waypoint &mdash; your AI travel planning agent</p>
+        </section>
+        """
 
     @staticmethod
     def _map_section(map_thumbnail_path: str | Path | None, map_url: str | None) -> str:

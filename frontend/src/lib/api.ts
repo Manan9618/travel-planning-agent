@@ -1,17 +1,40 @@
 import type {
+  AuthResponse,
   PlanRequest,
   PlanResponse,
   RefineRequest,
   ResumeRequest,
   SessionStateResponse,
+  UserResponse,
 } from '@/types/api'
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
 const API_KEY: string | undefined = import.meta.env.VITE_API_KEY as string | undefined
 
+// Real user accounts: the bearer token lives in localStorage (not just
+// component state) so a page refresh doesn't silently log the user out —
+// `api.ts` is a plain module, not a React component, so this is a simple
+// get/set pair rather than context state; `AuthContext` (lib/useAuth.tsx)
+// is the thing components actually interact with, and calls `setAuthToken`
+// whenever it changes so every subsequent request picks it up immediately.
+const AUTH_TOKEN_STORAGE_KEY = 'travel_agent_auth_token'
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+}
+
+export function setAuthToken(token: string | null): void {
+  if (token) localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
+  else localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+}
+
 function authHeaders(): HeadersInit {
-  return API_KEY ? { 'X-API-Key': API_KEY } : {}
+  const headers: Record<string, string> = {}
+  if (API_KEY) headers['X-API-Key'] = API_KEY
+  const token = getAuthToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -24,6 +47,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${res.statusText}: ${body}`)
   }
   return res.json() as Promise<T>
+}
+
+export function register(email: string, password: string): Promise<AuthResponse> {
+  return request('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
+}
+
+export function login(email: string, password: string): Promise<AuthResponse> {
+  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+}
+
+export function getCurrentUser(): Promise<UserResponse> {
+  return request('/auth/me')
 }
 
 export function startPlan(rawText: string): Promise<PlanResponse> {
@@ -81,5 +116,10 @@ export async function openInteractiveMap(sessionId: string): Promise<void> {
 
 export function wsUrl(sessionId: string): string {
   const base = API_BASE_URL.replace(/^http/, 'ws')
-  return `${base}/ws/${sessionId}`
+  // A browser's native WebSocket API can't set an Authorization header, so
+  // the bearer token travels as a query param instead — see WS /ws/{id}'s
+  // own handling of this on the backend (app.py).
+  const token = getAuthToken()
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${base}/ws/${sessionId}${query}`
 }

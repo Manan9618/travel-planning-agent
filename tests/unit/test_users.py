@@ -1,0 +1,70 @@
+import sqlite3
+from unittest.mock import patch
+
+import pytest
+
+from travel_agent.api.users import PostgresUserStore, UserStore, build_user_store
+
+
+def _store() -> UserStore:
+    return UserStore(":memory:")
+
+
+def test_create_and_get_by_id_round_trips():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hashed-password")
+    record = store.get_by_id("u1")
+    assert record is not None
+    assert record.user_id == "u1"
+    assert record.email == "traveler@example.com"
+    assert record.password_hash == "hashed-password"
+
+
+def test_get_by_email_finds_the_same_record():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hashed-password")
+    record = store.get_by_email("traveler@example.com")
+    assert record is not None
+    assert record.user_id == "u1"
+
+
+def test_email_lookup_is_case_insensitive():
+    store = _store()
+    store.create("u1", "Traveler@Example.com", "hashed-password")
+    assert store.get_by_email("traveler@example.com") is not None
+    assert store.get_by_email("TRAVELER@EXAMPLE.COM") is not None
+
+
+def test_email_is_stored_lowercased():
+    store = _store()
+    store.create("u1", "Traveler@Example.COM", "hashed-password")
+    assert store.get_by_id("u1").email == "traveler@example.com"
+
+
+def test_get_by_id_unknown_user_returns_none():
+    assert _store().get_by_id("nope") is None
+
+
+def test_get_by_email_unknown_user_returns_none():
+    assert _store().get_by_email("nobody@example.com") is None
+
+
+def test_duplicate_email_raises():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hash1")
+    with pytest.raises(sqlite3.IntegrityError):  # UNIQUE constraint on email
+        store.create("u2", "traveler@example.com", "hash2")
+
+
+# --- build_user_store (Postgres when DATABASE_URL is set) -----------------
+
+
+def test_build_user_store_returns_sqlite_store_without_database_url():
+    assert isinstance(build_user_store(""), UserStore)
+
+
+def test_build_user_store_returns_postgres_store_with_database_url():
+    with patch("travel_agent.api.users.psycopg.connect") as mock_connect:
+        store = build_user_store("postgresql://user@host/db")
+    assert isinstance(store, PostgresUserStore)
+    mock_connect.assert_called_once()

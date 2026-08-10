@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { downloadPdf, getPlan, refinePlan, resumePlan, startPlan } from '@/lib/api'
 import { usePlanningProgress } from '@/lib/useWebSocket'
+import { useAuth } from '@/lib/useAuth'
 import type { SessionStateResponse } from '@/types/api'
+import { AuthPage } from '@/components/AuthPage'
 import { Header } from '@/components/Header'
 import { MessageBubble } from '@/components/MessageBubble'
 import { ChatInput } from '@/components/ChatInput'
@@ -23,6 +25,7 @@ interface Turn {
 }
 
 function App() {
+  const { user, loading: authLoading, logout } = useAuth()
   const [turns, setTurns] = useState<Turn[]>([])
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
   const [epoch, setEpoch] = useState(0)
@@ -128,6 +131,18 @@ function App() {
     inputRef.current?.focus()
   }
 
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-paper font-mono text-xs text-ink-faint dark:bg-paper-dark dark:text-ink-faint-dark">
+        Loading…
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <AuthPage />
+  }
+
   return (
     <div className="flex h-full flex-col bg-paper font-sans dark:bg-paper-dark">
       <Header
@@ -136,6 +151,8 @@ function App() {
         onDownloadPdf={() => displayState && handleDownloadPdf(displayState.session_id)}
         pdfAvailable={Boolean(displayState?.pdf_path)}
         hasTurns={turns.length > 0}
+        userEmail={user.email}
+        onLogout={logout}
       />
 
       <div className="flex min-h-0 flex-1">

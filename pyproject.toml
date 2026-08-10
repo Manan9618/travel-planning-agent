@@ -38,6 +38,10 @@ playwright = "^1.62.0"
 structlog = "^26.1.0"
 prometheus-client = "^0.26.0"
 sentry-sdk = "^2.66.1"
+# Real user accounts: bcrypt for password hashing (never store/log plaintext),
+# PyJWT for signed bearer tokens issued on register/login.
+bcrypt = "^4.2"
+pyjwt = "^2.10"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -67,6 +71,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# `Depends(...)` as a parameter default is FastAPI's own required pattern
+# for dependency injection (including nested dependencies, e.g.
+# `current_user: UserRecord = Depends(get_current_user)`), not the
+# mutable-default-argument bug B008 exists to catch — FastAPI's own docs
+# recommend exactly this ignore for route-handler modules.
+"src/travel_agent/api/app.py" = ["B008"]
 
 [tool.pytest.ini_options]
 # tests/e2e needs a real browser plus real backend/frontend subprocesses

@@ -7,10 +7,12 @@ from travel_agent.models.core import (
     BudgetEvaluation,
     CategoryEvaluation,
     DayPlan,
+    FlightOption,
     HotelOption,
     Itinerary,
     ItineraryItem,
     TravelPreferences,
+    WeatherForecast,
 )
 from travel_agent.tools.pdf_generator import PDFGenerator
 from travel_agent.tools.unsplash_photo import CoverPhoto
@@ -72,9 +74,38 @@ def _item(
     )
 
 
-def _itinerary(days=None, **prefs_overrides):
+def _flight():
+    return FlightOption(
+        airline="AF",
+        origin="JFK",
+        destination="CDG",
+        departure_time="2026-09-01T09:00:00",
+        arrival_time="2026-09-01T21:00:00",
+        duration_minutes=420,
+        price=650,
+    )
+
+
+def _weather(day_num=1, rain_probability=0.1, temp_low_c=18, temp_high_c=24):
+    return WeatherForecast(
+        day=date(2026, 9, day_num),
+        condition="clear",
+        temp_high_c=temp_high_c,
+        temp_low_c=temp_low_c,
+        rain_probability=rain_probability,
+        wind_speed_kph=10,
+        comfort_score=8,
+    )
+
+
+def _itinerary(days=None, flights=None, hotel=True, **prefs_overrides):
     days = days if days is not None else [DayPlan(day_number=1, date=date(2026, 9, 1), items=[])]
-    return Itinerary(preferences=_prefs(**prefs_overrides), days=days, hotel=_hotel())
+    return Itinerary(
+        preferences=_prefs(**prefs_overrides),
+        days=days,
+        flights=flights or [],
+        hotel=_hotel() if hotel else None,
+    )
 
 
 def _generator(photo=None):
@@ -392,3 +423,138 @@ def test_generated_pdf_text_contains_destination_and_day_data(tmp_path):
     assert "Louvre Museum" in text
     assert "$20" in text
     assert "$1,500" in text
+
+
+# --- quick overview badges ----------------------------------------------------
+
+
+def test_quick_overview_shows_duration_travelers_and_cost():
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[_item("Louvre", cost=20)])
+    itinerary = _itinerary(days=[day], travelers=2)
+    html = _generator().render_html(itinerary)
+    assert "1 day" in html
+    assert 'class="badge-value">2</span><span class="badge-label">Travelers' in html
+    assert "Est. cost" in html
+
+
+def test_quick_overview_includes_trip_style_and_budget_tier_when_set():
+    from travel_agent.models.core import BudgetTier, TripStyle
+
+    itinerary = _itinerary(trip_style=TripStyle.BEACH, budget_tier=BudgetTier.LUXURY)
+    html = _generator().render_html(itinerary)
+    assert "Beach" in html
+    assert "Luxury" in html
+
+
+def test_quick_overview_omits_style_and_tier_when_unset():
+    itinerary = _itinerary()
+    html = _generator().render_html(itinerary)
+    assert '<span class="badge-label">Style</span>' not in html
+    assert '<span class="badge-label">Budget tier</span>' not in html
+
+
+# --- inclusions & exclusions --------------------------------------------------
+
+
+def test_inclusion_list_reflects_hotel_and_flights_when_present():
+    itinerary = _itinerary(flights=[_flight()], hotel=True)
+    html = _generator().render_html(itinerary)
+    assert "Accommodation: Test Hotel" in html
+    assert "Round-trip flights" in html
+
+
+def test_inclusion_list_omits_hotel_and_flights_when_absent():
+    itinerary = _itinerary(flights=[], hotel=False)
+    html = _generator().render_html(itinerary)
+    assert "Accommodation:" not in html
+    assert "Round-trip flights" not in html
+
+
+def test_inclusion_list_counts_attractions_and_restaurants():
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[_item("Louvre"), _item("Bistro", activity_type="restaurant", cost=30)],
+    )
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert "1 attraction visit" in html
+    assert "1 dining recommendation" in html
+
+
+def test_exclusion_list_is_always_present():
+    html = _generator().render_html(_itinerary())
+    assert "Travel insurance" in html
+    assert "Visa & passport fees" in html
+
+
+# --- packing essentials --------------------------------------------------------
+
+
+def test_packing_essentials_always_includes_the_baseline_items():
+    html = _generator().render_html(_itinerary())
+    assert "Comfortable walking shoes" in html
+
+
+def test_packing_essentials_includes_rain_gear_when_rain_is_likely():
+    day = DayPlan(
+        day_number=1, date=date(2026, 9, 1), items=[], weather=_weather(rain_probability=0.7)
+    )
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert "Rain jacket" in html
+
+
+def test_packing_essentials_omits_rain_gear_when_dry():
+    day = DayPlan(
+        day_number=1, date=date(2026, 9, 1), items=[], weather=_weather(rain_probability=0.1)
+    )
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert "Rain jacket" not in html
+
+
+def test_packing_essentials_includes_warm_layers_when_cold():
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[], weather=_weather(temp_low_c=2))
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert "Warm layers" in html
+
+
+def test_packing_essentials_includes_sun_protection_when_hot():
+    day = DayPlan(day_number=1, date=date(2026, 9, 1), items=[], weather=_weather(temp_high_c=34))
+    itinerary = _itinerary(days=[day])
+    html = _generator().render_html(itinerary)
+    assert "Sunscreen" in html
+
+
+def test_packing_essentials_includes_swimwear_for_beach_trips():
+    from travel_agent.models.core import TripStyle
+
+    itinerary = _itinerary(trip_style=TripStyle.BEACH)
+    html = _generator().render_html(itinerary)
+    assert "Swimwear" in html
+
+
+def test_packing_essentials_includes_first_aid_for_adventure_trips():
+    from travel_agent.models.core import TripStyle
+
+    itinerary = _itinerary(trip_style=TripStyle.ADVENTURE)
+    html = _generator().render_html(itinerary)
+    assert "first-aid" in html
+
+
+def test_packing_essentials_flags_dietary_restrictions():
+    itinerary = _itinerary(dietary_restrictions=["vegan", "nut allergy"])
+    html = _generator().render_html(itinerary)
+    assert "vegan" in html
+    assert "nut allergy" in html
+
+
+# --- footer ---------------------------------------------------------------
+
+
+def test_footer_band_is_present():
+    html = _generator().render_html(_itinerary())
+    assert "Have an amazing trip!" in html
+    assert "Waypoint" in html

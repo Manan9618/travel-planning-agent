@@ -42,6 +42,7 @@ from travel_agent.agents.graph import build_planning_graph
 from travel_agent.agents.state import determine_valid_steps
 from travel_agent.api.app import create_app
 from travel_agent.api.sessions import SessionStore
+from travel_agent.api.users import UserStore
 from travel_agent.models.core import (
     Attraction,
     FlightOption,
@@ -244,11 +245,35 @@ def app_factory():
         return create_app(
             graph=graph,
             session_store=SessionStore(":memory:"),
+            user_store=UserStore(":memory:"),
             narrator=narrator or FakeNarrator(),
             parser=parser or StubParser(),
         )
 
     return _make
+
+
+DEFAULT_TEST_EMAIL = "traveler@example.com"
+DEFAULT_TEST_PASSWORD = "hunter2222"  # noqa: S105 - test fixture, not a real credential
+
+
+def register_and_authenticate(
+    test_client: TestClient, email: str = DEFAULT_TEST_EMAIL, password: str = DEFAULT_TEST_PASSWORD
+) -> str:
+    """Registers a fresh account against `test_client`'s own (isolated,
+    in-memory) UserStore and sets the resulting bearer token as a default
+    header on the client, so every request this client makes from here on
+    is already authenticated as that user — every /plan, /refine, /export,
+    etc. test needs real user accounts (added alongside login/register) to
+    get past `get_current_user` at all, and updating every individual test
+    body to register+attach a token itself would be a lot of repetition for
+    something that's really a fixture concern. Returns the raw token too,
+    for the handful of tests (WebSocket) that need it as `?token=...` since
+    a browser WebSocket can't send a custom Authorization header."""
+    resp = test_client.post("/auth/register", json={"email": email, "password": password})
+    token = resp.json()["access_token"]
+    test_client.headers["Authorization"] = f"Bearer {token}"
+    return token
 
 
 def drain_all_sessions(test_client: TestClient, timeout: float = 5.0) -> None:
@@ -284,6 +309,7 @@ def isolated_client(app):
     need their own custom app (a different parser/narrator) and so build
     their own TestClient directly instead of using the fixture."""
     with TestClient(app) as test_client:
+        test_client.auth_token = register_and_authenticate(test_client)
         yield test_client
         drain_all_sessions(test_client)
 
@@ -297,6 +323,7 @@ def client(app_factory):
     # background work (like a /plan run) gets abandoned mid-flight instead of
     # continuing to make progress between polling calls.
     with TestClient(app_factory()) as test_client:
+        test_client.auth_token = register_and_authenticate(test_client)
         yield test_client
         drain_all_sessions(test_client)
 

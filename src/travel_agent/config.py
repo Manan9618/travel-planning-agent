@@ -54,5 +54,15 @@ class Settings:
     # anywhere logs get aggregated (Docker, CI, a real deployment).
     log_format: str = os.getenv("LOG_FORMAT", "console")
 
+    # Real user accounts. Unlike every other optional credential in this
+    # file, this can't sensibly default to "blank disables the feature" —
+    # JWTs still need *some* signing key for local dev/tests to work out of
+    # the box. Defaults to a clearly-marked, publicly-known dev value;
+    # anything reachable outside a single developer's machine (a real
+    # deployment) MUST set a real JWT_SECRET, or every token it issues is
+    # forgeable by anyone who's read this file.
+    jwt_secret: str = os.getenv("JWT_SECRET", "dev-insecure-secret-change-me-before-deploying")
+    jwt_expire_minutes: int = int(os.getenv("JWT_EXPIRE_MINUTES", str(7 * 24 * 60)))
+
 
 settings = Settings()

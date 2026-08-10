@@ -35,6 +35,20 @@ export const STEP_LABELS: Record<PlanningStep, string> = {
   generate_pdf: 'Generating PDF',
 }
 
+// --- Auth (real user accounts) ----------------------------------------------
+
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user_id: string
+  email: string
+}
+
+export interface UserResponse {
+  user_id: string
+  email: string
+}
+
 export interface TravelPreferences {
   origin: string | null
   destination: string

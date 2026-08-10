@@ -16,6 +16,46 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class RegisterRequest(BaseModel):
+    """Body for `POST /auth/register` — creates a new account."""
+
+    email: str = Field(
+        description="A valid email address, used as the login identifier.",
+        examples=["traveler@example.com"],
+    )
+    password: str = Field(
+        min_length=8,
+        description="At least 8 characters.",
+        examples=["correct horse battery staple"],
+    )
+
+
+class LoginRequest(BaseModel):
+    """Body for `POST /auth/login`."""
+
+    email: str = Field(examples=["traveler@example.com"])
+    password: str = Field(examples=["correct horse battery staple"])
+
+
+class AuthResponse(BaseModel):
+    """Returned by `POST /auth/register` and `POST /auth/login` — send
+    `access_token` back as an `Authorization: Bearer <token>` header on every
+    subsequent session-scoped request (or `?token=<access_token>` on the
+    WebSocket, which can't set custom headers)."""
+
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str = Field(examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"])
+    email: str = Field(examples=["traveler@example.com"])
+
+
+class UserResponse(BaseModel):
+    """Returned by `GET /auth/me`."""
+
+    user_id: str = Field(examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"])
+    email: str = Field(examples=["traveler@example.com"])
+
+
 class PlanRequest(BaseModel):
     """Body for `POST /plan` — a brand-new trip request."""
 

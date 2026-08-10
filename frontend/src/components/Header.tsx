@@ -7,6 +7,8 @@ interface Props {
   onDownloadPdf: () => void
   pdfAvailable: boolean
   hasTurns: boolean
+  userEmail: string
+  onLogout: () => void
 }
 
 function formatDateRange(start: string | null, end: string | null): string {
@@ -23,7 +25,15 @@ function formatDateRange(start: string | null, end: string | null): string {
   return `${startStr.toUpperCase()} – ${endStr.toUpperCase()}`
 }
 
-export function Header({ itinerary, onNewTrip, onDownloadPdf, pdfAvailable, hasTurns }: Props) {
+export function Header({
+  itinerary,
+  onNewTrip,
+  onDownloadPdf,
+  pdfAvailable,
+  hasTurns,
+  userEmail,
+  onLogout,
+}: Props) {
   const prefs = itinerary?.preferences
   const spent = itinerary
     ? itinerary.days
@@ -109,6 +119,14 @@ export function Header({ itinerary, onNewTrip, onDownloadPdf, pdfAvailable, hasT
           </button>
         )}
         <ThemeToggle />
+        <button
+          type="button"
+          onClick={onLogout}
+          title={userEmail}
+          className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+        >
+          Log out
+        </button>
       </div>
     </header>
   )
