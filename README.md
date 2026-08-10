@@ -1,7 +1,115 @@
 # Autonomous AI Travel Planning Agent
 
 End-to-end agentic system for personalized trip planning, itinerary building, and logistics.
-Built over a 24-week plan (see `docs/`); this repo tracks progress phase by phase.
+Built over a 24-week plan (see [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)); this repo
+tracks progress phase by phase.
+
+**Quick links:** [Architecture](#architecture) ·
+[Setup](#setup) · [Evaluation report](docs/EVALUATION_REPORT.md) ·
+[Architecture Decision Records](docs/adr/) ·
+[Blog post](docs/BLOG_POST.md) · [Resume bullets](docs/RESUME_BULLETS.md)
+
+![Demo: a real live session — typing a request, watching the agent search flights, hotels, attractions, restaurants, and weather in parallel, then reviewing the resulting map and PDF](docs/assets/demo.gif)
+
+_Real, unscripted capture (Week 23) of a live session against the actual
+running backend and real APIs — not a mockup. See it happen: a request is
+typed and sent, the step-progress checklist ticks off search steps
+(several in parallel — Week 20), and the finished trip is reviewed across
+the Itinerary/Map/PDF tabs, including the real GPT-4o narration and
+refinement chips._
+
+## Architecture
+
+Six layers, matching the plan's own system-architecture overview (see
+`docs/PROJECT_PLAN.md` §2.2) — a request enters through the presentation
+layer, is orchestrated by a LangGraph supervisor loop, executes through 12
+independent tools backed by 8 real external APIs, persists through a
+caching/storage layer that degrades gracefully without real infra, and is
+observed end-to-end:
+
+```mermaid
+flowchart TB
+    subgraph Presentation["Presentation Layer (Week 15-16)"]
+        UI["React 18 + TypeScript Chat UI"]
+    end
+
+    subgraph API["API Layer — FastAPI (Week 15)"]
+        REST["REST: /plan /refine /resume/id /export/id/pdf,map"]
+        WS["WebSocket: /ws/session_id (step progress + token-streamed narration)"]
+        MW["Rate limiting, API key auth, correlation IDs (Week 19)"]
+    end
+
+    subgraph Orchestration["Agent Orchestration — LangGraph StateGraph (Week 4)"]
+        SUP["Supervisor: 1 valid step -> run it directly;<br/>5 independent search steps -> fan out (Week 20)"]
+        NODES["12 worker-step nodes, each catches its own errors"]
+    end
+
+    subgraph Tools["Tool Execution Layer — 12 tools (Weeks 1-14)"]
+        SEARCH["Flights / Hotels / Attractions / Restaurants / Weather"]
+        BUILD["MultiDayOptimizer: clustering + route optimization<br/>+ weather-awareness + budget constraints (Weeks 9-11)"]
+        OUT["Map Generator (Folium) / PDF Generator (WeasyPrint)<br/>/ Narrator (token-streamed GPT-4o)"]
+    end
+
+    subgraph Data["Data & Caching Layer"]
+        DB[("SQLite (default) / PostgreSQL<br/>via DATABASE_URL — Week 18")]
+        REDIS[("Redis: API response cache +<br/>semantic cache (Weeks 2, 20)")]
+    end
+
+    subgraph Obs["Observability (Week 19)"]
+        PROM["Prometheus + Grafana"]
+        SENTRY["Sentry"]
+        LS["LangSmith"]
+    end
+
+    UI -->|HTTP| REST
+    UI <-->|events + tokens| WS
+    REST --> MW --> SUP
+    SUP <--> NODES
+    NODES --> SEARCH
+    NODES --> BUILD
+    NODES --> OUT
+    SEARCH -.cache.-> REDIS
+    SUP -.checkpoint + session state.-> DB
+    NODES -.metrics.-> PROM
+    NODES -.traces.-> LS
+    NODES -.errors.-> SENTRY
+```
+
+The agent loop itself (what "Orchestration" above actually does each turn) —
+a supervisor picks the next step, worker nodes route back to the
+supervisor, and repeat until every step is exhausted:
+
+```mermaid
+flowchart TD
+    START(["START"]) --> SUP{"Supervisor"}
+    SUP -->|"exactly 1 valid step"| SINGLE["Run that one step<br/>(build_itinerary, enrich_attractions,<br/>check_conflicts, optimize_budget,<br/>generate_map, generate_pdf, ...)"]
+    SUP -->|"5 valid steps at once<br/>(search phase, no dependency<br/>between them)"| FANOUT
+
+    subgraph FANOUT["Parallel superstep — real ThreadPoolExecutor concurrency (Week 20)"]
+        direction LR
+        FL["search_flights"]
+        HO["search_hotels"]
+        AT["find_attractions"]
+        RE["find_restaurants"]
+        WE["check_weather"]
+    end
+
+    SINGLE --> SUP
+    FL --> SUP
+    HO --> SUP
+    AT --> SUP
+    RE --> SUP
+    WE --> SUP
+    SUP -->|"unresolved budget/schedule<br/>conflict"| HITL["human_review<br/>(interrupt, Week 6)"]
+    HITL -->|"approve/reject, Week 15 /resume"| SUP
+    SUP -->|"nothing left"| DONE(["DONE"])
+```
+
+Full per-week rationale for every non-obvious choice above (LangGraph over a
+plain loop, real ThreadPoolExecutor fan-out over `asyncio.gather`, SQLite
+default with Postgres opt-in, ...) is in [`docs/adr/`](docs/adr/); the
+`## Status` log below is the single source of truth for exactly what
+shipped each week, in order.
 
 ## Status
 
@@ -1274,6 +1382,50 @@ itself is now saved on disk too: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
       (2, `budget_tier` threading); `test_itinerary_builder.py` (1, the
       arrival-day/first-full-day restaurant collision). 632 backend tests
       passing (11 skip without local Postgres)
+
+**Phase 6, Week 23 — Documentation & Portfolio Artifacts** — done
+
+- [x] **Architecture, in the README itself**: two Mermaid diagrams (system
+      layers; the LangGraph supervisor-loop agent loop, including Week
+      20's parallel fan-out and Week 6's human-in-the-loop pause) — see
+      [Architecture](#architecture) above
+- [x] **6 Architecture Decision Records** (`docs/adr/`) — not a generic
+      retrospective template, 6 real decisions with their real
+      alternatives-considered and real consequences (including 2 bugs each
+      decision's own choices later surfaced): LangGraph's supervisor-loop
+      over a plain script, the mock-data-fallback-everywhere pattern,
+      TravelPayouts over Amadeus, SQLite-default/Postgres-optional,
+      LangGraph's native fan-out over `asyncio.gather`, and sync
+      `graph.stream()` in a background thread over async `.astream()`
+- [x] **OpenAPI docs enriched** (`api/schemas.py`, `api/app.py`): every
+      request/response schema gained a class docstring and field-level
+      `examples` (Pydantic v2's `Field(examples=[...])`, rendered directly
+      into `/docs`' "Example Value" — no separate example-maintenance
+      file); every REST endpoint gained a `summary`/`description`/`tags`.
+      Live-verified against the real running server's `/openapi.json`
+- [x] **Technical blog post** (`docs/BLOG_POST.md`, ~1700 words): the full
+      24-week build, not just this week's work — architecture reasoning,
+      the mock-fallback pattern and the 2 bugs it caused, the Week 20/22
+      recalibration stories, and what the Week 22 simulated user study
+      caught that 620+ unit tests and a 10-dimension rubric didn't
+- [x] **5 resume bullets** (`docs/RESUME_BULLETS.md`) using this project's
+      own real, verified numbers throughout — not the plan's generic
+      template bullets, which state aspirational targets (e.g. ">90%
+      budget adherence") this project's real, honestly-reported numbers
+      don't all hit. Real numbers used instead: +45% route efficiency
+      (Week 10), 2.92x parallel speedup (Week 20), 98%+ test coverage
+      across 632+70 tests, the real evaluation-framework story (Week 22)
+- [x] **A real demo GIF** (`docs/assets/demo.gif`, embedded at the top of
+      this README) — not a mockup or a scripted screenshot sequence: an
+      unscripted Playwright capture of one real session against the actual
+      running backend (typing a live request, the step-progress checklist
+      ticking off parallel search steps, real narration streaming in, the
+      Map/PDF tabs showing genuine output), sampled to 82 frames and
+      assembled with `ffmpeg`
+- [x] The 24-week plan document itself is now saved at
+      [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) (a Week 22 fix,
+      referenced again here since Week 23's own artifacts link to it
+      throughout)
 
 ## Setup
 

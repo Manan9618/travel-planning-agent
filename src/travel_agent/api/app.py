@@ -142,7 +142,20 @@ def create_app(
     parser = parser or PreferenceParser()
 
     limiter = Limiter(key_func=get_remote_address)
-    app = FastAPI(title="Autonomous AI Travel Planning Agent", version="0.1.0")
+    app = FastAPI(
+        title="Autonomous AI Travel Planning Agent",
+        version="0.1.0",
+        description=(
+            "Turns a natural-language travel request into a complete, optimized "
+            "day-by-day itinerary — real flights, hotels, attractions, restaurants, "
+            "weather-aware scheduling, budget optimization, an interactive map, and "
+            "a PDF export, orchestrated by a LangGraph agent. Start with `POST /plan`, "
+            "then either poll `GET /plan/{session_id}` or connect to "
+            "`WS /ws/{session_id}` for live progress and token-streamed narration. "
+            "See the [README](https://github.com/Manan9618/travel-planning-agent) "
+            "for the full 24-week build log and architecture."
+        ),
+    )
     app.state.limiter = limiter
     app.add_middleware(
         CORSMiddleware,
@@ -171,7 +184,14 @@ def create_app(
         response.headers["X-Request-ID"] = request_id
         return response
 
-    @app.get("/metrics")
+    @app.get(
+        "/metrics",
+        tags=["observability"],
+        summary="Prometheus metrics",
+        description="Raw Prometheus exposition format — planning_step_calls_total, "
+        "planning_duration_seconds, llm_tokens_total, llm_cost_usd_total, and more "
+        "(see observability/metrics.py). Not authenticated; not meant for browsers.",
+    )
     async def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
@@ -293,6 +313,16 @@ def create_app(
         response_model=PlanResponse,
         status_code=202,
         dependencies=[Depends(verify_api_key)],
+        tags=["planning"],
+        summary="Start a new planning run",
+        description=(
+            "Starts planning a brand-new trip in the background and returns "
+            "immediately with a session_id. The actual work (parsing preferences, "
+            "searching flights/hotels/attractions/restaurants/weather in parallel, "
+            "building and optimizing the itinerary, generating the map and PDF) "
+            "continues asynchronously — poll `GET /plan/{session_id}` or stream "
+            "progress via `WS /ws/{session_id}`."
+        ),
     )
     @limiter.limit(PLAN_RATE_LIMIT)
     async def plan(request: Request, body: PlanRequest) -> PlanResponse:
@@ -309,6 +339,11 @@ def create_app(
         "/plan/{session_id}",
         response_model=SessionStateResponse,
         dependencies=[Depends(verify_api_key)],
+        tags=["planning"],
+        summary="Poll a session's current state",
+        description="Returns the current status, completed steps, and any results "
+        "available so far (preferences, itinerary, budget evaluation, ...) for a "
+        "session started by /plan or /refine. Safe to poll repeatedly.",
     )
     async def get_plan(session_id: str) -> SessionStateResponse:
         return _state_response(session_id)
@@ -317,6 +352,11 @@ def create_app(
         "/plan/{session_id}/resume",
         response_model=PlanResponse,
         dependencies=[Depends(verify_api_key)],
+        tags=["planning"],
+        summary="Resume a session paused for human review",
+        description="Continues a session whose status is awaiting_review (an "
+        "unresolved budget or scheduling conflict — see the awaiting_review "
+        "WebSocket event for details) with the traveler's approve/reject decision.",
     )
     async def resume_plan(session_id: str, body: ResumeRequest) -> PlanResponse:
         if session_store.get(session_id) is None:
@@ -330,6 +370,17 @@ def create_app(
         response_model=PlanResponse,
         status_code=202,
         dependencies=[Depends(verify_api_key)],
+        tags=["planning"],
+        summary="Refine an existing trip with a follow-up request",
+        description=(
+            "Starts a new session seeded from an existing (completed or "
+            "awaiting-review) session's results, merged with a natural-language "
+            "refinement. As of Week 21, only the search steps whose actual inputs "
+            "changed (destination, dates, origin, travelers, budget, interests) "
+            "re-run against real APIs — unaffected results (e.g. flights, when only "
+            "interests changed) are carried over rather than re-fetched. Watch for "
+            "the `refinement_seeded` WebSocket event to see which steps were reused."
+        ),
     )
     @limiter.limit(PLAN_RATE_LIMIT)
     async def refine(request: Request, body: RefineRequest) -> PlanResponse:
@@ -374,14 +425,32 @@ def create_app(
         asyncio.create_task(_drive_graph(new_session_id, seed))
         return PlanResponse(session_id=new_session_id, status="running")
 
-    @app.get("/export/{session_id}/pdf", dependencies=[Depends(verify_api_key)])
+    @app.get(
+        "/export/{session_id}/pdf",
+        dependencies=[Depends(verify_api_key)],
+        tags=["export"],
+        summary="Download the generated PDF itinerary",
+        description="Returns the PDF (cover page, day-by-day plan, map thumbnail, "
+        "QR code to the interactive map, budget table) once generate_pdf has "
+        "completed — 404 until then.",
+        response_class=FileResponse,
+    )
     async def export_pdf(session_id: str) -> FileResponse:
         pdf_path = (graph.get_state(_config(session_id)).values or {}).get("pdf_path")
         if not pdf_path or not Path(pdf_path).exists():
             raise HTTPException(status_code=404, detail="PDF not available for this session")
         return FileResponse(pdf_path, media_type="application/pdf", filename=Path(pdf_path).name)
 
-    @app.get("/export/{session_id}/map", dependencies=[Depends(verify_api_key)])
+    @app.get(
+        "/export/{session_id}/map",
+        dependencies=[Depends(verify_api_key)],
+        tags=["export"],
+        summary="View the interactive map",
+        description="Returns a self-contained interactive HTML map (Folium/Leaflet, "
+        "color-coded by day with a route-reveal timeline) once generate_map has "
+        "completed — 404 until then.",
+        response_class=HTMLResponse,
+    )
     async def export_map(session_id: str) -> HTMLResponse:
         map_html = (graph.get_state(_config(session_id)).values or {}).get("map_html")
         if not map_html:
