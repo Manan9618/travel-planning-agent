@@ -42,6 +42,7 @@ sentry-sdk = "^2.66.1"
 # PyJWT for signed bearer tokens issued on register/login.
 bcrypt = "^4.2"
 pyjwt = "^2.10"
+ics = "^0.7.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

@@ -1,4 +1,5 @@
 import type { BudgetEvaluation, Itinerary } from '@/types/api'
+import { formatCurrency } from '@/lib/currency'
 
 interface Props {
   itinerary: Itinerary
@@ -12,6 +13,12 @@ const STATUS_STYLE: Record<string, string> = {
 }
 
 export function BudgetPanel({ itinerary, evaluation }: Props) {
+  // Line-item costs (flight/hotel/attraction/restaurant prices) are always
+  // USD, as returned by their providers — only the aggregate `evaluation`
+  // below is currency-converted (BudgetOptimizer.evaluate, backend), so
+  // this fallback total (shown only when no evaluation exists yet) is
+  // deliberately still formatted as USD rather than the stated
+  // budget_currency.
   const totalCost =
     itinerary.days.flatMap((d) => d.items).reduce((sum, i) => sum + (i.cost ?? 0), 0) +
     (itinerary.hotel ? itinerary.hotel.price_per_night * Math.max(itinerary.days.length - 1, 1) : 0)
@@ -20,7 +27,7 @@ export function BudgetPanel({ itinerary, evaluation }: Props) {
     return (
       <div className="p-4">
         <p className="font-mono text-sm text-ink dark:text-ink-dark">
-          Estimated total cost: <b>${totalCost.toFixed(0)}</b>
+          Estimated total cost: <b>{formatCurrency(totalCost, 'USD')}</b>
         </p>
         <p className="mt-1 text-xs text-ink-muted dark:text-ink-muted-dark">
           No budget was stated for this trip, so there's nothing to evaluate against.
@@ -28,6 +35,8 @@ export function BudgetPanel({ itinerary, evaluation }: Props) {
       </div>
     )
   }
+
+  const currency = itinerary.preferences.budget_currency
 
   return (
     <div className="p-4">
@@ -45,10 +54,10 @@ export function BudgetPanel({ itinerary, evaluation }: Props) {
             <tr key={cat.category} className="border-b border-line last:border-b-0 dark:border-line-dark">
               <td className="py-1.5 text-ink capitalize dark:text-ink-dark">{cat.category}</td>
               <td className="py-1.5 text-right tabular-nums text-ink-muted dark:text-ink-muted-dark">
-                ${cat.allocated.toFixed(0)}
+                {formatCurrency(cat.allocated, currency)}
               </td>
               <td className="py-1.5 text-right tabular-nums text-ink dark:text-ink-dark">
-                ${cat.actual.toFixed(0)}
+                {formatCurrency(cat.actual, currency)}
               </td>
               <td className={`py-1.5 pl-3 text-right capitalize ${STATUS_STYLE[cat.status] ?? ''}`}>
                 {cat.status.replace('_', ' ')}
@@ -60,7 +69,8 @@ export function BudgetPanel({ itinerary, evaluation }: Props) {
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[11px] tabular-nums text-ink-muted dark:border-line-dark dark:text-ink-muted-dark">
-          TOTAL ${evaluation.total_actual.toFixed(0)} / ${evaluation.total_allocated.toFixed(0)}
+          TOTAL {formatCurrency(evaluation.total_actual, currency)} /{' '}
+          {formatCurrency(evaluation.total_allocated, currency)}
         </span>
         {evaluation.adherence_score != null && (
           <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[11px] tabular-nums text-ink-muted dark:border-line-dark dark:text-ink-muted-dark">

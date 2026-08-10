@@ -7,6 +7,7 @@ function prefs(): TravelPreferences {
   return {
     origin: null,
     destination: 'Paris',
+    additional_destinations: [],
     start_date: '2026-09-01',
     end_date: '2026-09-03',
     duration_days: 3,
@@ -40,13 +41,14 @@ function hotel(): HotelOption {
   }
 }
 
-function itinerary(): Itinerary {
+function itinerary(overrides: Partial<Itinerary> = {}): Itinerary {
   return {
     preferences: prefs(),
     days: [{ day_number: 1, date: '2026-09-01', items: [], weather: null, warnings: [] }],
     flights: [],
     hotel: hotel(),
     budget_summary: null,
+    ...overrides,
   }
 }
 
@@ -80,5 +82,13 @@ describe('BudgetPanel', () => {
   it('renders suggestions when present', () => {
     render(<BudgetPanel itinerary={itinerary()} evaluation={evaluation()} />)
     expect(screen.getByText(/Consider a nicer hotel/)).toBeInTheDocument()
+  })
+
+  it('formats amounts in the stated budget currency, not always USD', () => {
+    const eurItinerary = itinerary({
+      preferences: { ...prefs(), budget_currency: 'EUR' },
+    })
+    render(<BudgetPanel itinerary={eurItinerary} evaluation={evaluation()} />)
+    expect(screen.getByText('TOTAL €840 / €1,500')).toBeInTheDocument()
   })
 })

@@ -56,6 +56,33 @@ class UserResponse(BaseModel):
     email: str = Field(examples=["traveler@example.com"])
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Body for `POST /auth/forgot-password`."""
+
+    email: str = Field(examples=["traveler@example.com"])
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body for `POST /auth/reset-password` — `token` is the short-lived
+    reset token from the emailed link, not a bearer access token."""
+
+    token: str
+    new_password: str = Field(
+        min_length=8,
+        description="At least 8 characters.",
+        examples=["a new correct horse battery staple"],
+    )
+
+
+class MessageResponse(BaseModel):
+    """A plain human-readable confirmation, used where there's no other
+    data to return (e.g. `/auth/forgot-password`, which deliberately
+    always returns the same message regardless of whether the email is
+    registered)."""
+
+    message: str = Field(examples=["If that email is registered, a reset link has been sent."])
+
+
 class PlanRequest(BaseModel):
     """Body for `POST /plan` — a brand-new trip request."""
 
@@ -125,6 +152,37 @@ class SessionListResponse(BaseModel):
     """Returned by `GET /sessions` — the current user's trips, most recent first."""
 
     sessions: list[SessionSummary]
+
+
+class ShareResponse(BaseModel):
+    """Returned by `POST /plan/{session_id}/share` — the public URL,
+    built from an opaque, unguessable token, that anyone can use to view
+    a read-only copy of the trip at `GET /shared/{token}` (and its
+    frontend equivalent) without an account."""
+
+    share_url: str = Field(
+        examples=["http://localhost:5173/?shared=3fa85f64-5717-4562-b3fc-2c963f66afa6"]
+    )
+
+
+class SharedTripResponse(BaseModel):
+    """Returned by `GET /shared/{token}` — deliberately a narrower view
+    than `SessionStateResponse`: no `session_id`, `status`, `errors`, or
+    conflict history, since a public viewer with just a link shouldn't see
+    operational internals, only what a finished trip actually looks like."""
+
+    itinerary: dict[str, Any] | None = Field(
+        default=None, description="The full day-by-day Itinerary."
+    )
+    budget_evaluation: dict[str, Any] | None = Field(
+        default=None, description="Budget adherence and per-category cost breakdown, if available."
+    )
+    pdf_available: bool = Field(
+        default=False, description="Whether GET /shared/{token}/pdf will return a file."
+    )
+    map_available: bool = Field(
+        default=False, description="Whether GET /shared/{token}/map will return a file."
+    )
 
 
 class SessionStateResponse(BaseModel):

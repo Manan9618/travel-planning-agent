@@ -7,6 +7,7 @@ function prefs(overrides: Partial<TravelPreferences> = {}): TravelPreferences {
   return {
     origin: null,
     destination: 'Paris',
+    additional_destinations: [],
     start_date: '2026-09-01',
     end_date: '2026-09-03',
     duration_days: 3,

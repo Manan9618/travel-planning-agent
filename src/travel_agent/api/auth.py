@@ -62,11 +62,48 @@ def create_access_token(user_id: str) -> str:
 def decode_access_token(token: str) -> str:
     """Returns the user_id (the token's `sub` claim). Raises 401 on any
     invalid, malformed, or expired token - callers never need to
-    distinguish which."""
+    distinguish which. Also rejects a reset token presented as a bearer
+    token — real access tokens never carry a `purpose` claim, a reset
+    token always does (see `create_reset_token`) — so a leaked, still-valid
+    reset link can't double as a way into the account within its short
+    window."""
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="invalid or expired token") from exc
+    if "purpose" in payload:
+        raise HTTPException(status_code=401, detail="invalid or expired token")
+    return payload["sub"]
+
+
+_RESET_TOKEN_PURPOSE = "password_reset"
+
+
+def create_reset_token(user_id: str) -> str:
+    """A short-lived JWT distinct from an access token — a `purpose` claim
+    stops a leaked/expired access token from doubling as a password reset
+    (and vice versa), the two are only allowed to do the one thing they
+    were issued for."""
+    now = datetime.now(UTC)
+    payload = {
+        "sub": user_id,
+        "purpose": _RESET_TOKEN_PURPOSE,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.password_reset_expire_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def decode_reset_token(token: str) -> str:
+    """Returns the user_id a reset token was issued for. Raises 400 (not
+    401 — this isn't an auth-bearer-token failure, it's a bad reset link)
+    on any invalid, malformed, expired, or wrong-purpose token."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=400, detail="invalid or expired reset link") from exc
+    if payload.get("purpose") != _RESET_TOKEN_PURPOSE:
+        raise HTTPException(status_code=400, detail="invalid or expired reset link")
     return payload["sub"]
 
 

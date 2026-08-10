@@ -12,14 +12,27 @@ from travel_agent.models.core import (
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
 
 
-def _prefs(budget_total=None, tier=None, priority_weights=None):
+def _prefs(budget_total=None, tier=None, priority_weights=None, budget_currency="USD"):
     return TravelPreferences(
         destination="Paris",
         raw_text="t",
         budget_total=budget_total,
         budget_tier=tier,
         priority_weights=priority_weights or {},
+        budget_currency=budget_currency,
     )
+
+
+class FakeCurrencyConverter:
+    """Fixed 1 USD = 0.5 EUR rate — deterministic, no network involved."""
+
+    RATE = 0.5
+
+    def to_usd(self, amount, currency):
+        return amount if currency == "USD" else amount / self.RATE
+
+    def from_usd(self, amount, currency):
+        return amount if currency == "USD" else amount * self.RATE
 
 
 def _flight(price):
@@ -245,3 +258,57 @@ def test_evaluate_respects_budget_tier_in_allocation():
     itinerary = _itinerary(prefs, [_day(1)])
     evaluation = _optimizer().evaluate(itinerary)
     assert evaluation.allocation.hotel == 600
+
+
+# --- currency conversion ---------------------------------------------------
+
+
+def test_non_usd_budget_is_converted_to_usd_before_allocating():
+    # 500 EUR -> 1000 USD internally (FakeCurrencyConverter's 0.5 rate) ->
+    # mid-range split (50/25/25) of 1000 USD -> converted back to EUR for
+    # display: hotel 500 USD * 0.5 = 250 EUR.
+    prefs = _prefs(budget_total=500, tier=BudgetTier.MID_RANGE, budget_currency="EUR")
+    itinerary = _itinerary(prefs, [_day(1)])
+    optimizer = BudgetOptimizer(currency_converter=FakeCurrencyConverter())
+    evaluation = optimizer.evaluate(itinerary)
+    assert evaluation.allocation.hotel == 250
+    assert evaluation.allocation.food == 125
+    assert evaluation.allocation.activities == 125
+
+
+def test_non_usd_total_allocated_is_displayed_in_the_original_currency():
+    prefs = _prefs(budget_total=500, tier=BudgetTier.MID_RANGE, budget_currency="EUR")
+    itinerary = _itinerary(prefs, [_day(1)])
+    optimizer = BudgetOptimizer(currency_converter=FakeCurrencyConverter())
+    evaluation = optimizer.evaluate(itinerary)
+    assert evaluation.total_allocated == 500
+
+
+def test_non_usd_category_actual_spend_is_converted_for_display():
+    prefs = _prefs(budget_total=500, tier=BudgetTier.MID_RANGE, budget_currency="EUR")
+    day = _day(1, items=[_item("restaurant", 100)])  # 100 USD real spend
+    itinerary = _itinerary(prefs, [day])
+    optimizer = BudgetOptimizer(currency_converter=FakeCurrencyConverter())
+    evaluation = optimizer.evaluate(itinerary)
+    food_eval = next(c for c in evaluation.categories if c.category == "food")
+    assert food_eval.actual == 50  # 100 USD * 0.5 rate -> EUR
+
+
+def test_non_usd_adherence_score_compares_apples_to_apples():
+    # Real spend is 1000 USD (500 EUR converted); stated budget is 500 EUR
+    # (== 1000 USD) -> adherence should read as a perfect match, not as
+    # wildly over-budget the way comparing 1000 USD spend against a bare
+    # "500" would incorrectly suggest.
+    prefs = _prefs(budget_total=500, budget_currency="EUR")
+    itinerary = _itinerary(prefs, [_day(1)], flights=[_flight(1000)])
+    optimizer = BudgetOptimizer(currency_converter=FakeCurrencyConverter())
+    evaluation = optimizer.evaluate(itinerary)
+    assert evaluation.adherence_score == 1.0
+
+
+def test_usd_budget_is_unaffected_by_currency_conversion():
+    prefs = _prefs(budget_total=1000, tier=BudgetTier.MID_RANGE, budget_currency="USD")
+    itinerary = _itinerary(prefs, [_day(1)])
+    optimizer = BudgetOptimizer(currency_converter=FakeCurrencyConverter())
+    evaluation = optimizer.evaluate(itinerary)
+    assert evaluation.allocation.hotel == 500

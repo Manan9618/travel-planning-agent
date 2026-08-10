@@ -21,6 +21,7 @@ from travel_agent.models.core import (
     Itinerary,
 )
 from travel_agent.tools.budget_tracker import budget_adherence_score, itinerary_cost_breakdown
+from travel_agent.tools.currency_converter import CurrencyConverter
 
 DEFAULT_TIER_SPLITS: dict[BudgetTier, dict[str, float]] = {
     BudgetTier.BACKPACKER: {"hotel": 0.35, "food": 0.35, "activities": 0.30},
@@ -60,6 +61,17 @@ def _normalize_priority_weights(priority_weights: dict[str, float]) -> dict[str,
 
 
 class BudgetOptimizer:
+    def __init__(self, currency_converter: CurrencyConverter | None = None) -> None:
+        # Every real cost this class compares budget_total against (flight/
+        # hotel/restaurant/attraction prices, via itinerary_cost_breakdown)
+        # is USD, regardless of what currency the traveler stated their
+        # budget in — budget_currency used to be a pure display label with
+        # no effect on this math. `evaluate()` converts budget_total to USD
+        # once up front for all internal allocation/adherence math, then
+        # converts the returned figures back to budget_currency so what's
+        # actually shown to the traveler matches what they asked in.
+        self._currency_converter = currency_converter or CurrencyConverter()
+
     def allocate(
         self,
         budget_total: float,
@@ -88,41 +100,58 @@ class BudgetOptimizer:
         if not prefs.budget_total:
             return None
 
+        currency = prefs.budget_currency
+        budget_total_usd = self._currency_converter.to_usd(prefs.budget_total, currency)
+
         actual = itinerary_cost_breakdown(itinerary)
         allocation = self.allocate(
-            prefs.budget_total,
+            budget_total_usd,
             actual["flights"],
             tier=prefs.budget_tier,
             priority_weights=prefs.priority_weights,
         )
+
+        def _display(amount: float) -> float:
+            return self._currency_converter.from_usd(amount, currency)
 
         categories = []
         suggestions = []
         for category in ("hotel", "food", "activities"):
             allocated = getattr(allocation, category)
             spent = actual[category]
-            difference = spent - allocated
             status = self._status(spent, allocated)
+            # Suggestions are built from the USD figures (they compare
+            # against real provider prices) before conversion, so the
+            # dollar amounts they quote stay internally consistent with
+            # `spent`/`allocated`; only the returned CategoryEvaluation
+            # itself is currency-converted for display.
+            suggestions.extend(self._suggestions(category, allocated, spent, status))
             categories.append(
                 CategoryEvaluation(
                     category=category,
-                    allocated=allocated,
-                    actual=spent,
-                    difference=difference,
+                    allocated=_display(allocated),
+                    actual=_display(spent),
+                    difference=_display(spent - allocated),
                     status=status,
                 )
             )
-            suggestions.extend(self._suggestions(category, allocated, spent, status))
+
+        total_allocated_usd = (
+            allocation.flights + allocation.hotel + allocation.food + allocation.activities
+        )
+        total_actual_usd = sum(actual.values())
 
         return BudgetEvaluation(
-            allocation=allocation,
+            allocation=BudgetAllocation(
+                flights=_display(allocation.flights),
+                hotel=_display(allocation.hotel),
+                food=_display(allocation.food),
+                activities=_display(allocation.activities),
+            ),
             categories=categories,
-            total_allocated=allocation.flights
-            + allocation.hotel
-            + allocation.food
-            + allocation.activities,
-            total_actual=sum(actual.values()),
-            adherence_score=budget_adherence_score(itinerary),
+            total_allocated=_display(total_allocated_usd),
+            total_actual=_display(total_actual_usd),
+            adherence_score=budget_adherence_score(itinerary, budget_total_usd=budget_total_usd),
             suggestions=suggestions,
         )
 

@@ -29,6 +29,8 @@ from travel_agent.models.core import (
     TravelPreferences,
     WeatherForecast,
 )
+from travel_agent.tools.itinerary_builder import ItineraryBuilder
+from travel_agent.tools.multi_day_optimizer import MultiDayOptimizer
 from travel_agent.tools.unsplash_photo import CoverPhoto
 
 BASE_PREFS = {
@@ -113,6 +115,38 @@ def test_search_flights_node_tool_exception_records_error():
     assert "api down" in result["errors"][0]
 
 
+def test_search_flights_node_converts_non_usd_budget_to_usd_max_price():
+    tool = MagicMock()
+    tool.search.return_value = []
+
+    class FakeConverter:
+        def to_usd(self, amount, currency):
+            assert currency == "EUR"
+            return amount * 2  # arbitrary, deterministic fake rate
+
+    node = make_search_flights_node(tool, currency_converter=FakeConverter())
+    prefs = {**BASE_PREFS, "budget_total": 1000, "budget_currency": "EUR"}
+    node({"preferences": prefs})
+    assert tool.search.call_args.kwargs["max_price"] == 2000
+
+
+def test_search_flights_node_defaults_to_usd_when_no_currency_given():
+    tool = MagicMock()
+    tool.search.return_value = []
+    node = make_search_flights_node(tool)
+    node({"preferences": BASE_PREFS})
+    assert tool.search.call_args.kwargs["max_price"] == BASE_PREFS["budget_total"]
+
+
+def test_search_flights_node_max_price_is_none_without_a_budget():
+    tool = MagicMock()
+    tool.search.return_value = []
+    node = make_search_flights_node(tool)
+    prefs = {**BASE_PREFS, "budget_total": None}
+    node({"preferences": prefs})
+    assert tool.search.call_args.kwargs["max_price"] is None
+
+
 # --- search_hotels ---------------------------------------------------
 
 
@@ -157,6 +191,46 @@ def test_search_hotels_node_no_budget_tier_passes_none():
     assert tool.search.call_args.kwargs["budget_tier"] is None
 
 
+def test_search_hotels_node_searches_every_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest, *a, **kw: [
+        HotelOption(name=f"{dest} Hotel", address=dest, lat=1, lng=1, price_per_night=100)
+    ]
+    node = make_search_hotels_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert tool.search.call_count == 2
+    assert {h["name"] for h in result["hotels"]} == {"Paris Hotel", "Rome Hotel"}
+
+
+def test_search_hotels_node_tags_each_result_with_its_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest, *a, **kw: [
+        HotelOption(name="X", address=dest, lat=1, lng=1, price_per_night=100)
+    ]
+    node = make_search_hotels_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert {h["destination"] for h in result["hotels"]} == {"Paris", "Rome"}
+
+
+def test_search_hotels_node_one_destination_failing_does_not_lose_the_others():
+    tool = MagicMock()
+
+    def side_effect(dest, *a, **kw):
+        if dest == "Rome":
+            raise RuntimeError("rome api down")
+        return [HotelOption(name="Hotel X", address="Paris", lat=1, lng=1, price_per_night=100)]
+
+    tool.search.side_effect = side_effect
+    node = make_search_hotels_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert len(result["hotels"]) == 1
+    assert result["hotels"][0]["name"] == "Hotel X"
+    assert "rome api down" in result["errors"][0]
+
+
 # --- find_attractions ---------------------------------------------------
 
 
@@ -178,6 +252,42 @@ def test_find_attractions_node_exception_records_error():
     assert "down" in result["errors"][0]
 
 
+def test_find_attractions_node_searches_every_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest, **kw: [Attraction(name=f"{dest} spot", lat=1, lng=1)]
+    node = make_find_attractions_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert tool.search.call_count == 2
+    assert {a["name"] for a in result["attractions"]} == {"Paris spot", "Rome spot"}
+
+
+def test_find_attractions_node_tags_each_result_with_its_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest, **kw: [Attraction(name="X", lat=1, lng=1)]
+    node = make_find_attractions_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert {a["destination"] for a in result["attractions"]} == {"Paris", "Rome"}
+
+
+def test_find_attractions_node_one_destination_failing_does_not_lose_the_others():
+    tool = MagicMock()
+
+    def side_effect(dest, **kw):
+        if dest == "Rome":
+            raise RuntimeError("rome api down")
+        return [Attraction(name="Louvre", lat=48.86, lng=2.33)]
+
+    tool.search.side_effect = side_effect
+    node = make_find_attractions_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert len(result["attractions"]) == 1
+    assert result["attractions"][0]["name"] == "Louvre"
+    assert "rome api down" in result["errors"][0]
+
+
 # --- find_restaurants ---------------------------------------------------
 
 
@@ -197,6 +307,25 @@ def test_find_restaurants_node_exception_records_error():
     result = node({"preferences": BASE_PREFS})
     assert result["restaurants"] == []
     assert "down" in result["errors"][0]
+
+
+def test_find_restaurants_node_searches_every_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest: [Restaurant(name=f"{dest} cafe", lat=1, lng=1)]
+    node = make_find_restaurants_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert tool.search.call_count == 2
+    assert {r["name"] for r in result["restaurants"]} == {"Paris cafe", "Rome cafe"}
+
+
+def test_find_restaurants_node_tags_each_result_with_its_destination():
+    tool = MagicMock()
+    tool.search.side_effect = lambda dest: [Restaurant(name="X", lat=1, lng=1)]
+    node = make_find_restaurants_node(tool)
+    prefs = {**BASE_PREFS, "additional_destinations": ["Rome"]}
+    result = node({"preferences": prefs})
+    assert {r["destination"] for r in result["restaurants"]} == {"Paris", "Rome"}
 
 
 # --- check_weather ---------------------------------------------------
@@ -344,6 +473,40 @@ def test_build_itinerary_node_builder_exception_records_error():
 
     assert result["itinerary"] is None
     assert "scheduling failed" in result["errors"][0]
+
+
+def test_build_itinerary_node_passes_all_hotels_to_a_multi_day_optimizer():
+    builder = MagicMock(spec=MultiDayOptimizer)
+    fake_itinerary = MagicMock()
+    fake_itinerary.model_dump.return_value = {"days": []}
+    builder.build.return_value = fake_itinerary
+
+    state = _state_with_full_search_results()
+    state["hotels"] = [
+        HotelOption(
+            name="Paris Hotel", address="Paris", lat=48.85, lng=2.35, price_per_night=100
+        ).model_dump(mode="json"),
+        HotelOption(
+            name="Rome Hotel", address="Rome", lat=41.9, lng=12.5, price_per_night=120
+        ).model_dump(mode="json"),
+    ]
+    node = make_build_itinerary_node(builder)
+    node(state)
+
+    call_kwargs = builder.build.call_args.kwargs
+    assert [h.name for h in call_kwargs["hotels"]] == ["Paris Hotel", "Rome Hotel"]
+
+
+def test_build_itinerary_node_does_not_pass_hotels_to_a_plain_itinerary_builder():
+    builder = MagicMock(spec=ItineraryBuilder)
+    fake_itinerary = MagicMock()
+    fake_itinerary.model_dump.return_value = {"days": []}
+    builder.build.return_value = fake_itinerary
+
+    node = make_build_itinerary_node(builder)
+    node(_state_with_full_search_results())
+
+    assert "hotels" not in builder.build.call_args.kwargs
 
 
 # --- check_conflicts ---------------------------------------------------

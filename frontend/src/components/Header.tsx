@@ -1,15 +1,32 @@
-import type { Itinerary } from '@/types/api'
+import { useState } from 'react'
+import type { BudgetEvaluation, Itinerary } from '@/types/api'
+import { formatCurrency } from '@/lib/currency'
+import { destinationLabel } from '@/lib/destinations'
+import { createShareLink } from '@/lib/api'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
 interface Props {
   itinerary: Itinerary | null
+  budgetEvaluation: BudgetEvaluation | null
+  sessionId: string | null
   onNewTrip: () => void
   onDownloadPdf: () => void
+  onDownloadCalendar: () => void
   onMyTrips: () => void
   pdfAvailable: boolean
   hasTurns: boolean
   userEmail: string
   onLogout: () => void
+}
+
+type ShareStatus = 'idle' | 'sharing' | 'copied' | 'error'
+const SHARE_STATUS_RESET_MS = 2000
+
+const SHARE_BUTTON_LABELS: Record<ShareStatus, string> = {
+  idle: 'Share',
+  sharing: 'Sharing…',
+  copied: 'Link copied!',
+  error: 'Could not share',
 }
 
 function formatDateRange(start: string | null, end: string | null): string {
@@ -28,22 +45,49 @@ function formatDateRange(start: string | null, end: string | null): string {
 
 export function Header({
   itinerary,
+  budgetEvaluation,
+  sessionId,
   onNewTrip,
   onDownloadPdf,
+  onDownloadCalendar,
   onMyTrips,
   pdfAvailable,
   hasTurns,
   userEmail,
   onLogout,
 }: Props) {
+  const [shareStatus, setShareStatus] = useState<ShareStatus>('idle')
   const prefs = itinerary?.preferences
-  const spent = itinerary
-    ? itinerary.days
-        .flatMap((d) => d.items)
-        .reduce((sum, i) => sum + (i.cost ?? 0), 0) +
-      (itinerary.hotel ? itinerary.hotel.price_per_night * Math.max(itinerary.days.length - 1, 1) : 0)
-    : 0
-  const budget = prefs?.budget_total ?? null
+
+  async function handleShare() {
+    if (!sessionId) return
+    setShareStatus('sharing')
+    try {
+      const { share_url } = await createShareLink(sessionId)
+      await navigator.clipboard.writeText(share_url)
+      setShareStatus('copied')
+    } catch {
+      setShareStatus('error')
+    } finally {
+      setTimeout(() => setShareStatus('idle'), SHARE_STATUS_RESET_MS)
+    }
+  }
+  // budgetEvaluation's totals are already currency-converted
+  // (BudgetOptimizer.evaluate, backend) — prefer them once available.
+  // Before that (or if no budget was stated at all), fall back to a raw
+  // sum of line-item costs, which are always USD; the currency shown for
+  // that fallback is therefore always USD too, not budget_currency.
+  const usingEvaluation = budgetEvaluation != null
+  const spent = usingEvaluation
+    ? budgetEvaluation.total_actual
+    : itinerary
+      ? itinerary.days.flatMap((d) => d.items).reduce((sum, i) => sum + (i.cost ?? 0), 0) +
+        (itinerary.hotel
+          ? itinerary.hotel.price_per_night * Math.max(itinerary.days.length - 1, 1)
+          : 0)
+      : 0
+  const budget = usingEvaluation ? budgetEvaluation.total_allocated : (prefs?.budget_total ?? null)
+  const currency = usingEvaluation ? (prefs?.budget_currency ?? 'USD') : 'USD'
   const pct = budget ? Math.min(100, Math.round((spent / budget) * 100)) : null
 
   return (
@@ -61,7 +105,7 @@ export function Header({
         {prefs ? (
           <div className="flex items-baseline gap-2 truncate">
             <h1 className="truncate text-sm font-semibold text-ink dark:text-ink-dark">
-              {prefs.destination}
+              {destinationLabel(prefs)}
               {itinerary && itinerary.days.length > 0
                 ? ` — ${itinerary.days.length} day${itinerary.days.length !== 1 ? 's' : ''}`
                 : ''}
@@ -84,11 +128,14 @@ export function Header({
       </div>
 
       {budget != null && pct != null && (
-        <div className="hidden items-center gap-2 md:flex" title={`$${spent.toFixed(0)} of $${budget.toFixed(0)}`}>
+        <div
+          className="hidden items-center gap-2 md:flex"
+          title={`${formatCurrency(spent, currency)} of ${formatCurrency(budget, currency)}`}
+        >
           <span className="font-mono text-xs tabular-nums text-ink dark:text-ink-dark">
-            ${spent.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            {formatCurrency(spent, currency)}
             <span className="text-ink-faint dark:text-ink-faint-dark">
-              /${budget.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              /{formatCurrency(budget, currency)}
             </span>
           </span>
           <div className="h-1.5 w-20 overflow-hidden rounded-full bg-line dark:bg-line-dark">
@@ -115,6 +162,25 @@ export function Header({
             className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
           >
             New trip
+          </button>
+        )}
+        {itinerary && (
+          <button
+            type="button"
+            onClick={onDownloadCalendar}
+            className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+          >
+            Add to Calendar
+          </button>
+        )}
+        {itinerary && (
+          <button
+            type="button"
+            onClick={handleShare}
+            disabled={shareStatus === 'sharing'}
+            className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60 dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+          >
+            {SHARE_BUTTON_LABELS[shareStatus]}
           </button>
         )}
         {itinerary && (

@@ -1,11 +1,14 @@
 import type {
   AuthResponse,
+  MessageResponse,
   PlanRequest,
   PlanResponse,
   RefineRequest,
   ResumeRequest,
   SessionListResponse,
   SessionStateResponse,
+  ShareResponse,
+  SharedTripResponse,
   UserResponse,
 } from '@/types/api'
 
@@ -62,6 +65,17 @@ export function getCurrentUser(): Promise<UserResponse> {
   return request('/auth/me')
 }
 
+export function forgotPassword(email: string): Promise<MessageResponse> {
+  return request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) })
+}
+
+export function resetPassword(token: string, newPassword: string): Promise<MessageResponse> {
+  return request('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, new_password: newPassword }),
+  })
+}
+
 export function startPlan(rawText: string): Promise<PlanResponse> {
   const body: PlanRequest = { raw_text: rawText }
   return request('/plan', { method: 'POST', body: JSON.stringify(body) })
@@ -75,6 +89,19 @@ export function listSessions(): Promise<SessionListResponse> {
   return request('/sessions')
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  // Not routed through request<T>(): a 204 response has no body, and
+  // request<T>() always calls res.json(), which throws on an empty body.
+  const res = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${body}`)
+  }
+}
+
 export function resumePlan(sessionId: string, approved: boolean): Promise<PlanResponse> {
   const body: ResumeRequest = { approved }
   return request(`/plan/${sessionId}/resume`, { method: 'POST', body: JSON.stringify(body) })
@@ -83,6 +110,41 @@ export function resumePlan(sessionId: string, approved: boolean): Promise<PlanRe
 export function refinePlan(sessionId: string, rawText: string): Promise<PlanResponse> {
   const body: RefineRequest = { session_id: sessionId, raw_text: rawText }
   return request('/refine', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function createShareLink(sessionId: string): Promise<ShareResponse> {
+  return request(`/plan/${sessionId}/share`, { method: 'POST' })
+}
+
+export async function revokeShareLink(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/plan/${sessionId}/share`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${body}`)
+  }
+}
+
+// The /shared/{token} endpoints are deliberately public — no auth headers
+// sent at all, since anyone with just the link (no account) is meant to
+// be able to load them.
+
+export async function getSharedTrip(token: string): Promise<SharedTripResponse> {
+  const res = await fetch(`${API_BASE_URL}/shared/${token}`)
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`${res.status} ${res.statusText}: ${body}`)
+  }
+  return res.json() as Promise<SharedTripResponse>
+}
+
+export async function fetchSharedPdfBlobUrl(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}/shared/${token}/pdf`)
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
 }
 
 // The /export endpoints are behind the same X-API-Key check as everything
@@ -105,11 +167,24 @@ export function fetchMapBlobUrl(sessionId: string): Promise<string> {
   return fetchBlobUrl(`/export/${sessionId}/map`)
 }
 
+export function fetchCalendarBlobUrl(sessionId: string): Promise<string> {
+  return fetchBlobUrl(`/export/${sessionId}/calendar`)
+}
+
 export async function downloadPdf(sessionId: string): Promise<void> {
   const url = await fetchPdfBlobUrl(sessionId)
   const a = document.createElement('a')
   a.href = url
   a.download = `itinerary-${sessionId}.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function downloadCalendar(sessionId: string): Promise<void> {
+  const url = await fetchCalendarBlobUrl(sessionId)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `itinerary-${sessionId}.ics`
   a.click()
   URL.revokeObjectURL(url)
 }

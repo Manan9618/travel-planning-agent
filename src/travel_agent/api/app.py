@@ -11,7 +11,12 @@ Exposes the LangGraph planning pipeline (Weeks 1-14) over HTTP + WebSocket:
   different user, 404s rather than leaking that it exists. Separate from
   `verify_api_key` (an older, optional, deployment-wide shared secret,
   still supported and independent of per-user auth — both can be active
-  at once).
+  at once). `POST /auth/forgot-password` + `/reset-password` round out
+  account management: a short-lived (15 min default), purpose-scoped JWT
+  distinct from a bearer token (`create_reset_token`/`decode_reset_token`)
+  emailed via `EmailSender` — which logs the reset link instead of sending
+  when SMTP isn't configured, same graceful-degradation pattern as every
+  other optional integration in this project.
 - `POST /plan` starts a new planning run in the background and returns
   immediately (202 — see "async processing" below); `GET /plan/{session_id}`
   polls status/results.
@@ -31,7 +36,15 @@ Exposes the LangGraph planning pipeline (Weeks 1-14) over HTTP + WebSocket:
   those external, often rate-limited APIs for a change they have nothing
   to do with. Itinerary assembly onward always reruns.
 - `GET /export/{session_id}/pdf` and `/map` serve Week 14/13's generated
-  artifacts.
+  artifacts; `/calendar` generates a .ics file on the fly (one VEVENT per
+  scheduled item) rather than persisting one, since it's cheap to rebuild
+  and every other export already reads from the same graph state.
+- `POST /plan/{session_id}/share` mints an opaque, unguessable share token
+  (`sessions.share_token`); `GET /shared/{token}` and its own `/pdf`/`/map`
+  serve a read-only view keyed by that token instead of session_id+owner —
+  the one deliberate hole in the "every session-scoped endpoint requires a
+  bearer token" rule above, since a public link has to work for someone
+  with no account at all.
 - `WS /ws/{session_id}` streams step-progress events plus a genuine
   token-by-token LLM narration (`ItineraryNarrator`) once the itinerary is
   built — see `sessions.py` for why this polls the SQLite event log
@@ -55,6 +68,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -86,7 +100,9 @@ from travel_agent.agents.graph import (
 from travel_agent.agents.refinement import SEARCH_STEP_STATE_FIELD, build_refinement_seed
 from travel_agent.api.auth import (
     create_access_token,
+    create_reset_token,
     decode_access_token,
+    decode_reset_token,
     extract_bearer_token,
     hash_password,
     is_valid_email,
@@ -94,15 +110,20 @@ from travel_agent.api.auth import (
 )
 from travel_agent.api.schemas import (
     AuthResponse,
+    ForgotPasswordRequest,
     LoginRequest,
+    MessageResponse,
     PlanRequest,
     PlanResponse,
     RefineRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     ResumeRequest,
     SessionListResponse,
     SessionStateResponse,
     SessionSummary,
+    SharedTripResponse,
+    ShareResponse,
     UserResponse,
 )
 from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
@@ -116,6 +137,8 @@ from travel_agent.observability.logging import (
 )
 from travel_agent.observability.metrics import PLANNING_DURATION
 from travel_agent.observability.sentry import init_sentry
+from travel_agent.tools.calendar_export import generate_ics
+from travel_agent.tools.email_sender import EmailSender
 from travel_agent.tools.itinerary_narrator import ItineraryNarrator
 from travel_agent.tools.preference_parser import PreferenceParser
 
@@ -142,6 +165,7 @@ def create_app(
     user_store: UserStore | PostgresUserStore | None = None,
     narrator: ItineraryNarrator | None = None,
     parser: PreferenceParser | None = None,
+    email_sender: EmailSender | None = None,
 ) -> FastAPI:
     # Called here, not at module import time, for the same reason
     # build_planning_graph()/SessionStore() aren't module-level singletons
@@ -179,6 +203,7 @@ def create_app(
     user_store = user_store or build_user_store(settings.database_url)
     narrator = narrator or ItineraryNarrator()
     parser = parser or PreferenceParser()
+    email_sender = email_sender or EmailSender()
 
     def get_current_user(authorization: str | None = Header(default=None)) -> UserRecord:
         """FastAPI dependency: the authenticated user, from a real JWT
@@ -306,6 +331,56 @@ def create_app(
             access_token=create_access_token(user.user_id), user_id=user.user_id, email=user.email
         )
 
+    @app.post(
+        "/auth/forgot-password",
+        response_model=MessageResponse,
+        tags=["auth"],
+        summary="Request a password reset",
+        description="Always returns the same message whether or not the "
+        "email is registered, to avoid leaking which emails have accounts "
+        "— same principle as /auth/login's identical error for 'no such "
+        "user' and 'wrong password'. If the email IS registered, a reset "
+        "link (valid for a short time) is emailed to it. Not behind "
+        "`verify_api_key`, for the same reason /auth/register isn't.",
+    )
+    @limiter.limit(AUTH_RATE_LIMIT)
+    async def forgot_password(request: Request, body: ForgotPasswordRequest) -> MessageResponse:
+        user = user_store.get_by_email(body.email)
+        if user is not None:
+            reset_token = create_reset_token(user.user_id)
+            reset_url = f"{settings.frontend_base_url}/?reset_token={reset_token}"
+            email_sender.send(
+                user.email,
+                "Reset your Waypoint password",
+                "Someone requested a password reset for this account. If this "
+                f"was you, reset your password here (valid for "
+                f"{settings.password_reset_expire_minutes} minutes):\n\n{reset_url}\n\n"
+                "If this wasn't you, you can safely ignore this email.",
+            )
+        return MessageResponse(message="If that email is registered, a reset link has been sent.")
+
+    @app.post(
+        "/auth/reset-password",
+        response_model=MessageResponse,
+        tags=["auth"],
+        summary="Reset a password using a reset link's token",
+        description="Exchanges a valid, unexpired reset token (from the "
+        "emailed link) for a new password. `token` here is a short-lived "
+        "reset token, not a bearer access token — see /auth/forgot-password. "
+        "Not behind `verify_api_key`, for the same reason /auth/register "
+        "isn't.",
+    )
+    @limiter.limit(AUTH_RATE_LIMIT)
+    async def reset_password(request: Request, body: ResetPasswordRequest) -> MessageResponse:
+        user_id = decode_reset_token(body.token)
+        user = user_store.get_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=400, detail="invalid or expired reset link")
+        user_store.update_password(user_id, hash_password(body.new_password))
+        return MessageResponse(
+            message="Password updated — you can now sign in with your new password."
+        )
+
     @app.get(
         "/auth/me",
         response_model=UserResponse,
@@ -344,6 +419,24 @@ def create_app(
                 for r in records
             ]
         )
+
+    @app.delete(
+        "/sessions/{session_id}",
+        status_code=204,
+        dependencies=[Depends(verify_api_key)],
+        tags=["sessions"],
+        summary="Delete a trip",
+        description="Permanently deletes a session's metadata and event "
+        "log. Does not cascade to /refine follow-ups created from it — they "
+        "simply become unreachable from the dashboard, the same outcome "
+        "sessions created before user accounts existed already have.",
+    )
+    async def delete_session(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> Response:
+        _get_owned_session(session_id, current_user.user_id)
+        session_store.delete(session_id)
+        return Response(status_code=204)
 
     def _config(session_id: str) -> dict:
         # LangGraph's default recursion_limit (25) counts each worker-step ->
@@ -625,6 +718,124 @@ def create_app(
         map_html = (graph.get_state(_config(session_id)).values or {}).get("map_html")
         if not map_html:
             raise HTTPException(status_code=404, detail="map not available for this session")
+        return HTMLResponse(map_html)
+
+    @app.get(
+        "/export/{session_id}/calendar",
+        dependencies=[Depends(verify_api_key)],
+        tags=["export"],
+        summary="Download the itinerary as a calendar file",
+        description="Returns a .ics file (one event per scheduled item) once "
+        "build_itinerary has completed, importable into Google Calendar, "
+        "Apple Calendar, Outlook, or any other RFC 5545 client.",
+    )
+    async def export_calendar(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> Response:
+        _get_owned_session(session_id, current_user.user_id)
+        itinerary_data = (graph.get_state(_config(session_id)).values or {}).get("itinerary")
+        if not itinerary_data:
+            raise HTTPException(status_code=404, detail="itinerary not available for this session")
+        ics_text = generate_ics(Itinerary(**itinerary_data))
+        return Response(
+            content=ics_text,
+            media_type="text/calendar",
+            headers={"Content-Disposition": f'attachment; filename="itinerary-{session_id}.ics"'},
+        )
+
+    @app.post(
+        "/plan/{session_id}/share",
+        response_model=ShareResponse,
+        dependencies=[Depends(verify_api_key)],
+        tags=["sharing"],
+        summary="Create a public share link for a trip",
+        description="Generates (or returns the existing) opaque share token "
+        "for this session and returns a public, unauthenticated URL anyone "
+        "with the link can use to view a read-only copy via GET "
+        "/shared/{token} — no session internals (status, errors, conflict "
+        "history) are exposed. Requires build_itinerary to have already run.",
+    )
+    async def create_share_link(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> ShareResponse:
+        _get_owned_session(session_id, current_user.user_id)
+        itinerary_data = (graph.get_state(_config(session_id)).values or {}).get("itinerary")
+        if not itinerary_data:
+            raise HTTPException(status_code=400, detail="trip isn't ready to share yet")
+        record = session_store.get(session_id)
+        token = record.share_token or secrets.token_urlsafe(24)
+        if not record.share_token:
+            session_store.set_share_token(session_id, token)
+        return ShareResponse(share_url=f"{settings.frontend_base_url}/?shared={token}")
+
+    @app.delete(
+        "/plan/{session_id}/share",
+        status_code=204,
+        dependencies=[Depends(verify_api_key)],
+        tags=["sharing"],
+        summary="Revoke a trip's share link",
+        description="The existing link stops working immediately — "
+        "GET /shared/{token} 404s from this point on. Safe to call even if "
+        "the trip was never shared.",
+    )
+    async def revoke_share_link(
+        session_id: str, current_user: UserRecord = Depends(get_current_user)
+    ) -> Response:
+        _get_owned_session(session_id, current_user.user_id)
+        session_store.clear_share_token(session_id)
+        return Response(status_code=204)
+
+    @app.get(
+        "/shared/{token}",
+        response_model=SharedTripResponse,
+        tags=["sharing"],
+        summary="View a publicly shared trip",
+        description="No authentication required — deliberately public, "
+        "reachable by anyone with the link. Not behind verify_api_key "
+        "either: a stranger opening a shared link has neither a bearer "
+        "token nor the deployment's API key, the same bootstrap reasoning "
+        "that exempts /auth/register and /auth/login.",
+    )
+    async def get_shared_trip(token: str) -> SharedTripResponse:
+        record = session_store.get_by_share_token(token)
+        if record is None:
+            raise HTTPException(status_code=404, detail="shared trip not found")
+        values = graph.get_state(_config(record.session_id)).values or {}
+        return SharedTripResponse(
+            itinerary=values.get("itinerary"),
+            budget_evaluation=values.get("budget_evaluation"),
+            pdf_available=bool(values.get("pdf_path")),
+            map_available=bool(values.get("map_html")),
+        )
+
+    @app.get(
+        "/shared/{token}/pdf",
+        tags=["sharing"],
+        summary="Download a publicly shared trip's PDF",
+        response_class=FileResponse,
+    )
+    async def get_shared_pdf(token: str) -> FileResponse:
+        record = session_store.get_by_share_token(token)
+        if record is None:
+            raise HTTPException(status_code=404, detail="shared trip not found")
+        pdf_path = (graph.get_state(_config(record.session_id)).values or {}).get("pdf_path")
+        if not pdf_path or not Path(pdf_path).exists():
+            raise HTTPException(status_code=404, detail="PDF not available for this trip")
+        return FileResponse(pdf_path, media_type="application/pdf", filename=Path(pdf_path).name)
+
+    @app.get(
+        "/shared/{token}/map",
+        tags=["sharing"],
+        summary="View a publicly shared trip's interactive map",
+        response_class=HTMLResponse,
+    )
+    async def get_shared_map(token: str) -> HTMLResponse:
+        record = session_store.get_by_share_token(token)
+        if record is None:
+            raise HTTPException(status_code=404, detail="shared trip not found")
+        map_html = (graph.get_state(_config(record.session_id)).values or {}).get("map_html")
+        if not map_html:
+            raise HTTPException(status_code=404, detail="map not available for this trip")
         return HTMLResponse(map_html)
 
     @app.websocket("/ws/{session_id}")

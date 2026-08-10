@@ -49,6 +49,21 @@ export interface UserResponse {
   email: string
 }
 
+export interface MessageResponse {
+  message: string
+}
+
+export interface ShareResponse {
+  share_url: string
+}
+
+export interface SharedTripResponse {
+  itinerary: Itinerary | null
+  budget_evaluation: BudgetEvaluation | null
+  pdf_available: boolean
+  map_available: boolean
+}
+
 export interface SessionSummary {
   session_id: string
   raw_text: string
@@ -63,6 +78,7 @@ export interface SessionListResponse {
 export interface TravelPreferences {
   origin: string | null
   destination: string
+  additional_destinations: string[]
   start_date: string | null
   end_date: string | null
   duration_days: number | null

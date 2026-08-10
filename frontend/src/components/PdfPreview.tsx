@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react'
-import { fetchPdfBlobUrl } from '@/lib/api'
 
 interface Props {
-  sessionId: string
   available: boolean
+  // Identifies which trip's PDF this is (a session_id or a share token) —
+  // the effect keys off this primitive, not `fetchUrl` itself, so a fresh
+  // closure identity on every parent render doesn't trigger a refetch, but
+  // actually switching to a different trip (same `available` value) does.
+  cacheKey: string
+  // A thunk rather than a sessionId so this component works for both the
+  // authenticated /export/{id}/pdf endpoint and the public
+  // /shared/{token}/pdf one (SharedTripView) without knowing which.
+  fetchUrl: () => Promise<string>
 }
 
 /** Renders the real generated PDF (Week 14) in an <iframe> — browsers render
- * PDFs natively, so a blob: URL from the authenticated /export endpoint
- * (same fetch-then-blob approach as the download button; a plain iframe src
+ * PDFs natively, so a blob: URL from the /export endpoint (same
+ * fetch-then-blob approach as the download button; a plain iframe src
  * can't attach the X-API-Key header) is all that's needed, no separate
  * PDF-to-image pipeline. */
-export function PdfPreview({ sessionId, available }: Props) {
+export function PdfPreview({ available, cacheKey, fetchUrl }: Props) {
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -19,7 +26,7 @@ export function PdfPreview({ sessionId, available }: Props) {
     if (!available) return
     let objectUrl: string | null = null
     let cancelled = false
-    fetchPdfBlobUrl(sessionId)
+    fetchUrl()
       .then((u) => {
         if (cancelled) return
         objectUrl = u
@@ -32,7 +39,7 @@ export function PdfPreview({ sessionId, available }: Props) {
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [sessionId, available])
+  }, [available, cacheKey])
 
   if (!available) {
     return (

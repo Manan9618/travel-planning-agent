@@ -42,7 +42,14 @@ _SYSTEM_PROMPT = """You extract structured travel-planning details from a user's
 language request. Today's date is {today}. Resolve relative dates ("next month", "in July", \
 "for a week starting Friday") against today's date, choosing the nearest future occurrence. \
 Only fill fields you can reasonably infer; leave others empty. Never invent a destination, \
-budget, or date that was not stated or clearly implied."""
+budget, or date that was not stated or clearly implied.
+
+If the trip visits more than one city in sequence (e.g. "Paris then Rome", "5 days split \
+between Tokyo and Kyoto"), put the first city visited in `destination` and every city visited \
+after it, in visiting order, in `additional_destinations`. A trip to one city/region only \
+should leave `additional_destinations` empty — do not split a single destination that merely \
+has multiple neighborhoods or landmarks (e.g. "Paris, including the Louvre and Montmartre" is \
+still just `destination="Paris"`)."""
 
 
 class _ParsedFields(BaseModel):
@@ -50,6 +57,10 @@ class _ParsedFields(BaseModel):
 
     origin: str | None = Field(default=None, description="Departure city or airport")
     destination: str | None = Field(default=None, description="Primary destination city or region")
+    additional_destinations: list[str] = Field(
+        default_factory=list,
+        description="Extra cities visited in sequence after `destination`, in visiting order",
+    )
     start_date: date | None = None
     end_date: date | None = None
     duration_days: int | None = Field(default=None, ge=1, le=90)

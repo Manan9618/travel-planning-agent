@@ -90,6 +90,21 @@ def test_parse_passes_through_destination(monkeypatch):
     assert result.destination == "Tokyo"
 
 
+def test_parse_passes_through_additional_destinations(monkeypatch):
+    parser = _parser_with_result(
+        monkeypatch, _minimal_fields(destination="Paris", additional_destinations=["Rome"])
+    )
+    result = parser.parse("Paris then Rome")
+    assert result.destination == "Paris"
+    assert result.additional_destinations == ["Rome"]
+
+
+def test_parse_additional_destinations_defaults_to_empty(monkeypatch):
+    parser = _parser_with_result(monkeypatch, _minimal_fields(destination="Tokyo"))
+    result = parser.parse("just tokyo")
+    assert result.additional_destinations == []
+
+
 def test_parse_passes_through_origin(monkeypatch):
     parser = _parser_with_result(monkeypatch, _minimal_fields(origin="New York"))
     result = parser.parse("from NYC to Paris")

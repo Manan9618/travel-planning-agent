@@ -36,6 +36,13 @@ class TravelPreferences(BaseModel):
 
     origin: str | None = Field(default=None, description="Departure city or airport")
     destination: str = Field(description="Primary destination city or region")
+    additional_destinations: list[str] = Field(
+        default_factory=list,
+        description="Extra stops visited in sequence after `destination`, e.g. "
+        "['Rome'] for 'Paris then Rome'. Flights are still only searched for "
+        "`destination` (round-trip in/out of the primary city) — a deliberately "
+        "lighter scope than modeling a separate flight/hotel leg per city.",
+    )
     start_date: date | None = Field(default=None)
     end_date: date | None = Field(default=None)
     duration_days: int | None = Field(default=None, ge=1, le=90)
@@ -102,6 +109,11 @@ class HotelOption(BaseModel):
     is_mock_data: bool = Field(
         default=False, description="True when the provider failed and this is a fallback"
     )
+    destination: str | None = Field(
+        default=None,
+        description="Which city this hotel is in, for multi-destination trips — "
+        "None for a single-destination trip's only hotel.",
+    )
 
 
 class Attraction(BaseModel):
@@ -117,6 +129,11 @@ class Attraction(BaseModel):
     is_mock_data: bool = Field(
         default=False, description="True when the provider failed and this is a fallback"
     )
+    destination: str | None = Field(
+        default=None,
+        description="Which city this was searched for, for multi-destination "
+        "trips — None for a single-destination trip.",
+    )
 
 
 class Restaurant(BaseModel):
@@ -129,6 +146,11 @@ class Restaurant(BaseModel):
     opening_hours: str | None = None
     is_mock_data: bool = Field(
         default=False, description="True when the provider failed and this is a fallback"
+    )
+    destination: str | None = Field(
+        default=None,
+        description="Which city this was searched for, for multi-destination "
+        "trips — None for a single-destination trip.",
     )
 
 

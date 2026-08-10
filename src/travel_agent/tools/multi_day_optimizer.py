@@ -111,7 +111,26 @@ class MultiDayOptimizer:
         restaurants: list[Restaurant],
         flight: FlightOption | None = None,
         weather: list[WeatherForecast] | None = None,
+        hotels: list[HotelOption] | None = None,
     ) -> Itinerary:
+        # Multi-destination trips (preferences.additional_destinations) get
+        # their own path entirely — see _build_multi_destination — so a
+        # single-destination trip (the overwhelming common case) runs
+        # through exactly the same code below as before this feature
+        # existed, unchanged.
+        destinations = [preferences.destination, *preferences.additional_destinations]
+        if len(destinations) > 1:
+            return self._build_multi_destination(
+                preferences,
+                destinations,
+                hotel,
+                hotels or [hotel],
+                attractions,
+                restaurants,
+                flight,
+                weather,
+            )
+
         dates = trip_dates(preferences)
         num_days = len(dates)
         num_full_days = max(num_days - 2, 0)
@@ -181,6 +200,142 @@ class MultiDayOptimizer:
 
         return Itinerary(
             preferences=preferences, days=days, flights=[flight] if flight else [], hotel=hotel
+        )
+
+    # --- multi-destination trips ---------------------------------------------
+
+    @staticmethod
+    def _partition_full_days(num_full_days: int, num_destinations: int) -> list[int]:
+        """Splits the trip's full days as evenly as possible across
+        destinations, in visiting order — any remainder goes to the
+        earlier destinations first (e.g. 5 full days over 3 cities ->
+        [2, 2, 1]), rather than leaving a later city with nothing purely
+        because the split doesn't divide evenly."""
+        base, remainder = divmod(num_full_days, num_destinations)
+        return [base + (1 if i < remainder else 0) for i in range(num_destinations)]
+
+    def _build_multi_destination(
+        self,
+        preferences: TravelPreferences,
+        destinations: list[str],
+        primary_hotel: HotelOption,
+        hotels: list[HotelOption],
+        attractions: list[Attraction],
+        restaurants: list[Restaurant],
+        flight: FlightOption | None,
+        weather: list[WeatherForecast] | None,
+    ) -> Itinerary:
+        """Runs the exact same clustering + priority + budget-aware
+        backtracking + cross-day balancing + route-ordering pipeline as
+        `build()`'s single-destination path — just once per destination,
+        against that city's own attraction/restaurant pool and its own
+        share of the trip's full days, then stitches the results together
+        in visiting order. Deliberately does not model travel between
+        cities (no separate flight/train leg, no transition day) — the
+        lighter multi-destination scope this feature was built to.
+        """
+        dates = trip_dates(preferences)
+        num_days = len(dates)
+        num_full_days = max(num_days - 2, 0)
+        weather_by_date = {w.day: w for w in (weather or [])}
+
+        def hotel_for(dest: str) -> HotelOption:
+            return next((h for h in hotels if h.destination == dest), primary_hotel)
+
+        def attractions_for(dest: str) -> list[Attraction]:
+            return [a for a in attractions if (a.destination or destinations[0]) == dest]
+
+        def restaurants_for(dest: str) -> list[Restaurant]:
+            return [r for r in restaurants if (r.destination or destinations[0]) == dest]
+
+        # One shared per-day activity rate (computed once, from the whole
+        # trip's budget) rather than recomputing it per destination block —
+        # dividing the total activity budget by only *that* block's day
+        # count would let every block think the full trip's activity
+        # budget was available just to it, silently multiplying the
+        # effective budget by the number of destinations.
+        per_day_budget = self._per_day_activity_budget(preferences, flight, num_full_days)
+        day_counts = self._partition_full_days(num_full_days, len(destinations))
+
+        per_destination_days: list[list[Attraction]] = []
+        for dest, count in zip(destinations, day_counts, strict=True):
+            dest_attractions = attractions_for(dest)
+            if count == 0 or not dest_attractions:
+                per_destination_days.extend([[] for _ in range(count)])
+                continue
+            dest_hotel = hotel_for(dest)
+            labels = cluster_attractions(dest_attractions)
+            priority = _priority_sorted(dest_attractions, labels, preferences.must_see)
+
+            total_slots = count * SLOTS_PER_DAY
+            pool = priority[:total_slots]
+            points = [(dest_hotel.lat, dest_hotel.lng)] + [(a.lat, a.lng) for a in pool]
+            matrix = self._distance_matrix_tool.compute_matrix(points)
+            index_of = {id(a): i + 1 for i, a in enumerate(pool)}
+
+            day_assignments = self._assign_attractions_to_days(priority, count, per_day_budget)
+            day_assignments = self._balance_days(day_assignments, matrix, index_of)
+            day_assignments = [self._ordered_day(day, matrix, index_of) for day in day_assignments]
+            per_destination_days.extend(day_assignments)
+
+        full_day_destination: list[str] = []
+        for dest, count in zip(destinations, day_counts, strict=True):
+            full_day_destination.extend([dest] * count)
+
+        days = []
+        for day_index, current_date in enumerate(dates):
+            day_number = day_index + 1
+            forecast = weather_by_date.get(current_date)
+            if day_index == 0:
+                first_dest = destinations[0]
+                day_plan = self._builder.build_day(
+                    day_number,
+                    current_date,
+                    "arrival",
+                    hotel_for(first_dest),
+                    restaurants_for(first_dest),
+                    flight=flight,
+                    destination=first_dest,
+                    forecast=forecast,
+                )
+            elif day_index == num_days - 1:
+                last_dest = destinations[-1]
+                day_plan = self._builder.build_day(
+                    day_number,
+                    current_date,
+                    "departure",
+                    hotel_for(last_dest),
+                    restaurants_for(last_dest),
+                    forecast=forecast,
+                )
+            else:
+                full_day_idx = day_index - 1
+                dest = (
+                    full_day_destination[full_day_idx]
+                    if full_day_idx < len(full_day_destination)
+                    else destinations[-1]
+                )
+                day_attractions = (
+                    per_destination_days[full_day_idx]
+                    if full_day_idx < len(per_destination_days)
+                    else []
+                )
+                day_plan = self._builder.build_day(
+                    day_number,
+                    current_date,
+                    "full",
+                    hotel_for(dest),
+                    restaurants_for(dest),
+                    attractions=day_attractions,
+                    forecast=forecast,
+                )
+            days.append(day_plan)
+
+        return Itinerary(
+            preferences=preferences,
+            days=days,
+            flights=[flight] if flight else [],
+            hotel=primary_hotel,
         )
 
     # --- day-assignment backtracking search ---------------------------------

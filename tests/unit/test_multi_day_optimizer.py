@@ -316,3 +316,162 @@ def test_max_balance_swaps_bounds_the_rebalancing_loop():
     # sanity check on the constant itself, so a future accidental edit that
     # sets it to something unbounded (e.g. removing the cap) is caught
     assert 0 < MAX_BALANCE_SWAPS <= 10
+
+
+# --- multi-destination trips ----------------------------------------------
+
+
+ROME_LAT, ROME_LNG = 41.90, 12.50
+
+
+def _rome_hotel():
+    return HotelOption(
+        name="Rome Hotel",
+        address="Rome, Italy",
+        lat=ROME_LAT,
+        lng=ROME_LNG,
+        price_per_night=120,
+        destination="Rome",
+    )
+
+
+def _rome_attraction(name, rating=4.5, price=None):
+    return Attraction(
+        name=name, lat=ROME_LAT, lng=ROME_LNG, rating=rating, price=price, destination="Rome"
+    )
+
+
+def _rome_restaurant(name):
+    return Restaurant(name=name, lat=ROME_LAT, lng=ROME_LNG, rating=4.5, destination="Rome")
+
+
+def _paris_attraction(name, rating=4.5, price=None):
+    return Attraction(
+        name=name, lat=48.86, lng=2.33, rating=rating, price=price, destination="Paris"
+    )
+
+
+def test_partition_full_days_splits_evenly_with_remainder_to_earlier_destinations():
+    assert MultiDayOptimizer._partition_full_days(5, 3) == [2, 2, 1]
+    assert MultiDayOptimizer._partition_full_days(6, 3) == [2, 2, 2]
+    assert MultiDayOptimizer._partition_full_days(1, 3) == [1, 0, 0]
+    assert MultiDayOptimizer._partition_full_days(0, 2) == [0, 0]
+
+
+def test_multi_destination_trip_produces_one_day_plan_per_date():
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction(f"Paris {i}") for i in range(4)] + [
+        _rome_attraction(f"Rome {i}") for i in range(4)
+    ]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    assert len(itinerary.days) == 6
+
+
+def test_multi_destination_full_days_are_split_across_cities_in_order():
+    # 6-day trip = 4 full days (arrival + 4 full + departure). 2 destinations
+    # -> 2 full days each (test_partition_full_days_... already covers the
+    # split math itself) - the first block of full days should only ever
+    # contain Paris attractions, the second only Rome ones.
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction(f"Paris {i}") for i in range(4)] + [
+        _rome_attraction(f"Rome {i}") for i in range(4)
+    ]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    full_days = itinerary.days[1:-1]
+
+    def attraction_titles(days):
+        return {i.title for d in days for i in d.items if i.activity_type == "attraction"}
+
+    first_block_titles = attraction_titles(full_days[:2])
+    second_block_titles = attraction_titles(full_days[2:])
+    assert first_block_titles and second_block_titles  # sanity: both blocks got attractions
+    assert all(t.startswith("Paris") for t in first_block_titles)
+    assert all(t.startswith("Rome") for t in second_block_titles)
+
+
+def test_multi_destination_arrival_day_uses_the_first_destinations_hotel():
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction("Paris 1")] + [_rome_attraction("Rome 1")]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    arrival_titles = [i.title for i in itinerary.days[0].items]
+    assert any("Test Hotel" in t for t in arrival_titles)  # _hotel()'s name, Paris's hotel
+
+
+def test_multi_destination_departure_day_checks_out_of_the_last_destinations_hotel():
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction("Paris 1")] + [_rome_attraction("Rome 1")]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    departure_titles = [i.title for i in itinerary.days[-1].items]
+    assert any("Rome Hotel" in t for t in departure_titles)
+
+
+def test_multi_destination_falls_back_to_primary_hotel_when_none_tagged():
+    # No hotels list passed at all -> hotel_for() should fall back to the
+    # single `hotel` argument for every destination rather than raising.
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction("Paris 1")] + [_rome_attraction("Rome 1")]
+    itinerary = _optimizer().build(prefs, _hotel(), attractions, RESTAURANTS)
+    assert itinerary.hotel.name == "Test Hotel"
+    departure_titles = [i.title for i in itinerary.days[-1].items]
+    assert any("Test Hotel" in t for t in departure_titles)
+
+
+def test_multi_destination_itinerary_hotel_is_the_primary_destinations_hotel():
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction("Paris 1")] + [_rome_attraction("Rome 1")]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    assert itinerary.hotel.name == "Test Hotel"
+
+
+def test_three_destinations_with_too_few_days_does_not_crash():
+    # 1 full day, 3 destinations -> only the first gets any full day at all
+    # (_partition_full_days(1, 3) == [1, 0, 0]) - later destinations should
+    # degrade gracefully (no attractions scheduled for them), not raise.
+    prefs = _prefs(destination="Paris", duration=3, additional_destinations=["Rome", "Florence"])
+    attractions = [_paris_attraction("Paris 1")] + [_rome_attraction("Rome 1")]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    assert len(itinerary.days) == 3
+
+
+def test_multi_destination_restaurants_are_scoped_to_that_days_city():
+    prefs = _prefs(destination="Paris", duration=6, additional_destinations=["Rome"])
+    attractions = [_paris_attraction(f"Paris {i}") for i in range(4)] + [
+        _rome_attraction(f"Rome {i}") for i in range(4)
+    ]
+    restaurants = [_restaurant("Paris Cafe", lat=48.85, lng=2.35)] + [
+        _rome_restaurant("Rome Trattoria")
+    ]
+    itinerary = _optimizer().build(
+        prefs, _hotel(), attractions, restaurants, hotels=[_hotel(), _rome_hotel()]
+    )
+    # Every restaurant item on a Paris-block full day must be the Paris one,
+    # never the Rome trattoria bleeding into the wrong city's days.
+    first_full_day_restaurants = [
+        i.title for i in itinerary.days[1].items if i.activity_type == "restaurant"
+    ]
+    assert all("Rome" not in t for t in first_full_day_restaurants)
+
+
+def test_single_destination_ignores_the_hotels_parameter_entirely():
+    # Passing an (unused) hotels list for a plain single-destination trip
+    # must not change anything - the single-destination path never reads it.
+    prefs = _prefs(destination="Paris", duration=6)
+    attractions = [_attraction(f"A{i}") for i in range(4)]
+    with_hotels_param = _optimizer().build(
+        prefs, _hotel(), attractions, RESTAURANTS, hotels=[_hotel(), _rome_hotel()]
+    )
+    without_hotels_param = _optimizer().build(prefs, _hotel(), attractions, RESTAURANTS)
+    assert len(with_hotels_param.days) == len(without_hotels_param.days)
+    assert with_hotels_param.hotel.name == without_hotels_param.hotel.name == "Test Hotel"

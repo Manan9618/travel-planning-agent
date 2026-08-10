@@ -45,6 +45,21 @@ def test_get_by_id_unknown_user_returns_none():
     assert _store().get_by_id("nope") is None
 
 
+def test_update_password_changes_the_hash():
+    store = _store()
+    store.create("u1", "traveler@example.com", "old-hash")
+    store.update_password("u1", "new-hash")
+    assert store.get_by_id("u1").password_hash == "new-hash"
+
+
+def test_update_password_does_not_affect_other_fields():
+    store = _store()
+    store.create("u1", "traveler@example.com", "old-hash")
+    store.update_password("u1", "new-hash")
+    record = store.get_by_id("u1")
+    assert record.email == "traveler@example.com"
+
+
 def test_get_by_email_unknown_user_returns_none():
     assert _store().get_by_email("nobody@example.com") is None
 

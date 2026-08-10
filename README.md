@@ -1527,6 +1527,109 @@ accounts already existed, so this makes them worth having.
       more for `AuthPage`'s new back-button/initial-mode behavior, 1 for
       `Header`'s new My Trips button)
 
+**Post-Plan — Account Completeness, Sharing & Trip Depth** — done
+
+Seven features from a single "what else could make this more attractive"
+follow-up, grouped as the user asked: account completeness (delete-trip,
+forgot-password), sharing (public share links), and trip depth (currency
+conversion, calendar export, multi-destination trips).
+
+- [x] **Delete a trip** (`DELETE /sessions/{id}` + `SessionStore.delete`):
+      the dashboard had no way to remove a trip until now — a small "✕" per
+      card expands into an inline Delete/Cancel confirm rather than a
+      browser `confirm()` dialog. Deliberately doesn't cascade to `/refine`
+      children of a deleted session — they're already unreachable from the
+      dashboard (`list_by_user` only returns top-level sessions), the same
+      "unreachable, not cleaned up" state pre-account sessions already had
+- [x] **Real currency conversion** (`CurrencyConverter`, `tools/
+      currency_converter.py`): `budget_currency` used to be a pure display
+      label — every real cost this app compares a budget against (flight/
+      hotel/attraction/restaurant prices) is USD regardless of what
+      currency a traveler stated their budget in, so a "€2000" trip was
+      silently treated as "$2000" everywhere `BudgetOptimizer` and the
+      flight-search price ceiling compared it. Uses open.er-api.com (free,
+      no key) for live rates, Redis-cached, with a small static fallback
+      table if the live call fails — same graceful-degradation spirit as
+      `HotelSearchTool`'s mock-hotel fallback. `BudgetOptimizer.evaluate()`
+      now converts the stated budget to USD once for all internal
+      allocation/adherence math, then converts the returned figures back to
+      the traveler's currency for display; the flight-search node converts
+      before using budget as a `max_price` filter. Known, accepted
+      limitation: Week 6's conflict-detection/human-review trigger and
+      `MultiDayOptimizer`'s per-day budget-aware attraction selection still
+      compare the raw (unconverted) stated budget against USD costs — fixing
+      the primary display path (what a traveler actually sees) was judged
+      more valuable than touching those deeper internals too
+- [x] **Calendar export** (`tools/calendar_export.py`, `GET /export/{id}/
+      calendar`): one VEVENT per scheduled item via the `ics` library
+      (rather than hand-rolling RFC 5545's line-folding/escaping rules,
+      which real calendar apps are notoriously picky about), generated on
+      the fly from graph state rather than persisted — cheap to rebuild, and
+      every other export already works this way
+- [x] **Forgot password** (`create_reset_token`/`decode_reset_token`,
+      `EmailSender`, `POST /auth/forgot-password` + `/reset-password`): a
+      short-lived (15 min default) JWT with a `purpose` claim distinct from
+      a bearer access token — `decode_access_token` now explicitly rejects
+      a token carrying that claim, closing a real gap caught while writing
+      this feature's own tests (a leaked reset link could otherwise double
+      as a way into the account for its whole validity window).
+      `/auth/forgot-password` always returns the same response whether or
+      not the email is registered, same user-enumeration-avoidance
+      principle as `/auth/login`'s identical error for "no such user" and
+      "wrong password". `EmailSender` sends real SMTP when configured,
+      otherwise logs the reset link instead — same optional-credential
+      pattern as every other integration in this project — which is how
+      this was actually live-tested end to end (register → request reset →
+      pull the real link from the backend's own logs → set a new password →
+      land back on the sign-in form → log in with the new password)
+- [x] **Public share links** (`sessions.share_token`, `POST /plan/{id}/
+      share`, `GET /shared/{token}` + `/pdf` + `/map`): an opaque,
+      unguessable token grants read-only access to one trip with no account
+      at all — the one deliberate hole in "every session-scoped endpoint
+      requires a bearer token", since a public link has to work for a
+      stranger. The public response is narrower than the owner's own
+      (`SharedTripResponse`: itinerary/budget/PDF-map-availability only, no
+      session_id/status/errors/conflict history). `SharedTripView.tsx`
+      reuses the same `ItineraryPanel`/`MapPreview`/`BudgetPanel` the
+      owner's canvas already uses (all three render straight from itinerary
+      data, no auth-gated fetch inside them) with a `PdfPreview` pointed at
+      the public PDF endpoint instead of the authenticated one
+- [x] **Multi-destination trips** (`additional_destinations`,
+      `MultiDayOptimizer._build_multi_destination`): scoped deliberately
+      light after an explicit choice between two options — multiple stops
+      sharing one flight in/out and one PDF/map (chosen) vs. a full
+      multi-leg rewrite with a separate flight/hotel search per city (not
+      chosen, "comparable in size to several of the original 24 weeks
+      combined"). `find_attractions`/`find_restaurants`/`search_hotels`
+      loop over every destination and tag each result; `MultiDayOptimizer`
+      splits the trip's full days evenly across destinations (remainder to
+      the earlier ones) and runs the *exact same* clustering + priority +
+      backtracking + cross-day-balancing pipeline the single-destination
+      path already used — once per destination block — rather than trying
+      to make the existing 1.5km-radius clustering somehow separate cities
+      1000km apart on its own (traced through the actual day-assignment
+      algorithm before assuming that would work; it wouldn't have — the
+      backtracking search and travel-time balancing have no per-city
+      awareness at all). A single-destination trip runs through the
+      untouched original code path, zero risk to it. Live-verified with a
+      real "4 days split between Paris and Rome" request through the full
+      graph (real parser, real search APIs, real optimizer): Day 1 arrival
+      in Paris, Day 2 full day in Paris only, Day 3 full day in Rome only,
+      Day 4 departure from Rome — zero city bleed across days, correct
+      hotel/restaurants per block, real PDF cover page reading "Paris &
+      Rome"
+- [x] Live-verified the whole batch against the real Dockerized stack via
+      the `browser-automation` skill: register → plan a trip with a
+      non-USD budget (confirmed € in the budget panel) → calendar download
+      → share → open the share link in a fresh page (confirmed read-only,
+      no login) → delete the trip from the dashboard → forgot password →
+      real reset link pulled from backend logs → reset → sign in with the
+      new password. One real bug caught and fixed by this pass itself: the
+      password-reset "Go to sign in" button used to land on the marketing
+      landing page instead of the sign-in form
+- [x] 805 backend tests passing (11 skip without local Postgres, up from
+      703), 136 frontend tests passing (up from 97)
+
 ## Setup
 
 ```bash

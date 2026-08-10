@@ -187,6 +187,15 @@ class PDFGenerator:
 
     # --- sections -----------------------------------------------------
 
+    @staticmethod
+    def _destination_label(prefs) -> str:
+        destinations = [prefs.destination, *prefs.additional_destinations]
+        if len(destinations) == 1:
+            return destinations[0]
+        if len(destinations) == 2:
+            return " & ".join(destinations)
+        return ", ".join(destinations[:-1]) + f" & {destinations[-1]}"
+
     def _cover_page(self, itinerary: Itinerary) -> str:
         prefs = itinerary.preferences
         photo = self._photo_tool.get_cover_photo(prefs.destination)
@@ -215,7 +224,7 @@ class PDFGenerator:
         return f"""
         <section class="cover" style="{background_style}">
           <div class="cover-overlay">
-            <h1>{prefs.destination}</h1>
+            <h1>{self._destination_label(prefs)}</h1>
             <p class="subtitle">{dates}</p>
             {trip_style}
           </div>

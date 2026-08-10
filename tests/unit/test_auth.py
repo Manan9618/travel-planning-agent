@@ -3,7 +3,9 @@ from fastapi import HTTPException
 
 from travel_agent.api.auth import (
     create_access_token,
+    create_reset_token,
     decode_access_token,
+    decode_reset_token,
     extract_bearer_token,
     hash_password,
     is_valid_email,
@@ -86,6 +88,47 @@ def test_decode_access_token_rejects_an_expired_token(monkeypatch):
         settings, "jwt_expire_minutes", -1
     )  # already expired the instant it's issued
     token = create_access_token("user-123")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token)
+    assert exc_info.value.status_code == 401
+
+
+# --- password reset tokens -------------------------------------------------
+
+
+def test_create_and_decode_reset_token_roundtrips_the_user_id():
+    token = create_reset_token("user-123")
+    assert decode_reset_token(token) == "user-123"
+
+
+def test_decode_reset_token_rejects_garbage():
+    with pytest.raises(HTTPException) as exc_info:
+        decode_reset_token("not-a-real-token")
+    assert exc_info.value.status_code == 400
+
+
+def test_decode_reset_token_rejects_an_expired_token(monkeypatch):
+    from travel_agent.config import settings
+
+    monkeypatch.setattr(settings, "password_reset_expire_minutes", -1)
+    token = create_reset_token("user-123")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_reset_token(token)
+    assert exc_info.value.status_code == 400
+
+
+def test_decode_reset_token_rejects_a_real_access_token():
+    # An access token is signed with the same secret and would otherwise
+    # decode fine — the `purpose` claim is what stops it from also being
+    # usable as a password reset link.
+    token = create_access_token("user-123")
+    with pytest.raises(HTTPException) as exc_info:
+        decode_reset_token(token)
+    assert exc_info.value.status_code == 400
+
+
+def test_decode_access_token_rejects_a_real_reset_token():
+    token = create_reset_token("user-123")
     with pytest.raises(HTTPException) as exc_info:
         decode_access_token(token)
     assert exc_info.value.status_code == 401

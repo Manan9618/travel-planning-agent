@@ -36,6 +36,7 @@ from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver, detect_and_resolve
+from travel_agent.tools.currency_converter import CurrencyConverter
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
@@ -67,6 +68,15 @@ def _trip_dates(prefs: dict) -> tuple[date, date]:
     return start, end
 
 
+def _all_destinations(prefs: dict) -> list[str]:
+    """`destination` (primary) followed by `additional_destinations`, in
+    visiting order — every attraction/restaurant/hotel search loops over
+    this instead of just `prefs["destination"]`, so a single-destination
+    trip (the overwhelming common case, `additional_destinations` empty)
+    behaves exactly as before this list has just one entry."""
+    return [prefs["destination"], *prefs.get("additional_destinations", [])]
+
+
 def make_parse_preferences_node(parser: PreferenceParser) -> Node:
     def node(state: PlanningState) -> dict:
         try:
@@ -87,7 +97,11 @@ def make_parse_preferences_node(parser: PreferenceParser) -> Node:
     return node
 
 
-def make_search_flights_node(tool: FlightSearchTool) -> Node:
+def make_search_flights_node(
+    tool: FlightSearchTool, currency_converter: CurrencyConverter | None = None
+) -> Node:
+    currency_converter = currency_converter or CurrencyConverter()
+
     def node(state: PlanningState) -> dict:
         prefs = state["preferences"]
         try:
@@ -98,13 +112,25 @@ def make_search_flights_node(tool: FlightSearchTool) -> Node:
                     f"no IATA mapping for {prefs['origin']!r} or {prefs['destination']!r}"
                 )
             depart, ret = _trip_dates(prefs)
+            budget_total = prefs.get("budget_total")
+            # FlightSearchTool's own prices are always USD; a non-USD
+            # budget_total (e.g. a "€1500" trip) needs converting before it
+            # can act as a real price ceiling here — otherwise the raw
+            # number gets compared against USD prices under the wrong
+            # currency, either filtering out every valid flight or letting
+            # through ones the traveler's real budget can't cover.
+            max_price = (
+                currency_converter.to_usd(budget_total, prefs.get("budget_currency") or "USD")
+                if budget_total
+                else None
+            )
             results = tool.search(
                 origin_code,
                 dest_code,
                 depart,
                 ret,
                 max_results=5,
-                max_price=prefs.get("budget_total"),
+                max_price=max_price,
             )
             return {
                 "flights": [f.model_dump(mode="json") for f in results],
@@ -125,28 +151,35 @@ def make_search_flights_node(tool: FlightSearchTool) -> Node:
 def make_search_hotels_node(tool: HotelSearchTool) -> Node:
     def node(state: PlanningState) -> dict:
         prefs = state["preferences"]
-        try:
-            check_in, check_out = _trip_dates(prefs)
-            budget_tier = BudgetTier(prefs["budget_tier"]) if prefs.get("budget_tier") else None
-            results = tool.search(
-                prefs["destination"],
-                check_in,
-                check_out,
-                adults=prefs.get("travelers", 1),
-                budget_tier=budget_tier,
-            )
-            return {
-                "hotels": [h.model_dump(mode="json") for h in results],
-                "completed_steps": [PlanningStep.SEARCH_HOTELS.value],
-                "errors": [],
-            }
-        except Exception as exc:
-            logger.warning("search_hotels failed: %s", exc)
-            return {
-                "hotels": [],
-                "completed_steps": [PlanningStep.SEARCH_HOTELS.value],
-                "errors": [f"search_hotels: {exc}"],
-            }
+        check_in, check_out = _trip_dates(prefs)
+        budget_tier = BudgetTier(prefs["budget_tier"]) if prefs.get("budget_tier") else None
+        found: list[dict] = []
+        errors: list[str] = []
+        # Each destination's hotel(s) searched against the same overall
+        # trip window — HotelSearchTool returns price_per_night, not a
+        # fixed total for the window, so this is a fine stand-in for not
+        # yet knowing (at this point in the graph) how many nights
+        # build_itinerary will actually allocate to each city.
+        for destination in _all_destinations(prefs):
+            try:
+                results = tool.search(
+                    destination,
+                    check_in,
+                    check_out,
+                    adults=prefs.get("travelers", 1),
+                    budget_tier=budget_tier,
+                )
+                found.extend(
+                    {**h.model_dump(mode="json"), "destination": destination} for h in results
+                )
+            except Exception as exc:
+                logger.warning("search_hotels failed for %s: %s", destination, exc)
+                errors.append(f"search_hotels ({destination}): {exc}")
+        return {
+            "hotels": found,
+            "completed_steps": [PlanningStep.SEARCH_HOTELS.value],
+            "errors": errors,
+        }
 
     return node
 
@@ -154,20 +187,27 @@ def make_search_hotels_node(tool: HotelSearchTool) -> Node:
 def make_find_attractions_node(tool: AttractionFinderTool) -> Node:
     def node(state: PlanningState) -> dict:
         prefs = state["preferences"]
-        try:
-            results = tool.search(prefs["destination"], interests=prefs.get("interests"))
-            return {
-                "attractions": [a.model_dump(mode="json") for a in results],
-                "completed_steps": [PlanningStep.FIND_ATTRACTIONS.value],
-                "errors": [],
-            }
-        except Exception as exc:
-            logger.warning("find_attractions failed: %s", exc)
-            return {
-                "attractions": [],
-                "completed_steps": [PlanningStep.FIND_ATTRACTIONS.value],
-                "errors": [f"find_attractions: {exc}"],
-            }
+        found: list[dict] = []
+        errors: list[str] = []
+        # Each destination searched independently, and one's failure
+        # doesn't discard results already found for the others - the same
+        # "one tool failing doesn't halt the graph" principle this module's
+        # docstring states, just applied within a multi-destination step
+        # instead of only across steps.
+        for destination in _all_destinations(prefs):
+            try:
+                results = tool.search(destination, interests=prefs.get("interests"))
+                found.extend(
+                    {**a.model_dump(mode="json"), "destination": destination} for a in results
+                )
+            except Exception as exc:
+                logger.warning("find_attractions failed for %s: %s", destination, exc)
+                errors.append(f"find_attractions ({destination}): {exc}")
+        return {
+            "attractions": found,
+            "completed_steps": [PlanningStep.FIND_ATTRACTIONS.value],
+            "errors": errors,
+        }
 
     return node
 
@@ -175,20 +215,22 @@ def make_find_attractions_node(tool: AttractionFinderTool) -> Node:
 def make_find_restaurants_node(tool: RestaurantFinderTool) -> Node:
     def node(state: PlanningState) -> dict:
         prefs = state["preferences"]
-        try:
-            results = tool.search(prefs["destination"])
-            return {
-                "restaurants": [r.model_dump(mode="json") for r in results],
-                "completed_steps": [PlanningStep.FIND_RESTAURANTS.value],
-                "errors": [],
-            }
-        except Exception as exc:
-            logger.warning("find_restaurants failed: %s", exc)
-            return {
-                "restaurants": [],
-                "completed_steps": [PlanningStep.FIND_RESTAURANTS.value],
-                "errors": [f"find_restaurants: {exc}"],
-            }
+        found: list[dict] = []
+        errors: list[str] = []
+        for destination in _all_destinations(prefs):
+            try:
+                results = tool.search(destination)
+                found.extend(
+                    {**r.model_dump(mode="json"), "destination": destination} for r in results
+                )
+            except Exception as exc:
+                logger.warning("find_restaurants failed for %s: %s", destination, exc)
+                errors.append(f"find_restaurants ({destination}): {exc}")
+        return {
+            "restaurants": found,
+            "completed_steps": [PlanningStep.FIND_RESTAURANTS.value],
+            "errors": errors,
+        }
 
     return node
 
@@ -218,20 +260,28 @@ def make_check_weather_node(tool: WeatherCheckerTool) -> Node:
 def make_build_itinerary_node(builder: ItineraryBuilder | MultiDayOptimizer) -> Node:
     def node(state: PlanningState) -> dict:
         try:
-            hotels = state.get("hotels") or []
-            if not hotels:
+            raw_hotels = state.get("hotels") or []
+            if not raw_hotels:
                 raise ValueError("no hotel available to build an itinerary from")
             prefs = TravelPreferences(**state["preferences"])
-            hotel = HotelOption(**hotels[0])
+            hotels = [HotelOption(**h) for h in raw_hotels]
+            hotel = hotels[0]
             attractions = [Attraction(**a) for a in state.get("attractions", [])]
             restaurants = [Restaurant(**r) for r in state.get("restaurants", [])]
             flights = state.get("flights") or []
             flight = FlightOption(**flights[0]) if flights else None
             weather = [WeatherForecast(**w) for w in state.get("weather", [])]
 
-            itinerary = builder.build(
-                prefs, hotel, attractions, restaurants, flight=flight, weather=weather
-            )
+            # `hotels` (plural, every city's search results) is only
+            # meaningful to MultiDayOptimizer's multi-destination path -
+            # the plain ItineraryBuilder never gained multi-destination
+            # support (it predates even Week 9's clustering), so it isn't
+            # offered a parameter it has no use for.
+            build_kwargs: dict = {"flight": flight, "weather": weather}
+            if isinstance(builder, MultiDayOptimizer):
+                build_kwargs["hotels"] = hotels
+
+            itinerary = builder.build(prefs, hotel, attractions, restaurants, **build_kwargs)
             return {
                 "itinerary": itinerary.model_dump(mode="json"),
                 "completed_steps": [PlanningStep.BUILD_ITINERARY.value],

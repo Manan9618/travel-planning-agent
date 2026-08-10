@@ -146,6 +146,18 @@ def test_cover_page_shows_destination_and_dates():
     assert "Sep 01" in html
 
 
+def test_cover_page_shows_two_destinations_joined_with_ampersand():
+    itinerary = _itinerary(additional_destinations=["Rome"])
+    html = _generator().render_html(itinerary)
+    assert "<h1>Paris & Rome</h1>" in html
+
+
+def test_cover_page_shows_three_or_more_destinations_oxford_comma_style():
+    itinerary = _itinerary(additional_destinations=["Rome", "Florence"])
+    html = _generator().render_html(itinerary)
+    assert "<h1>Paris, Rome & Florence</h1>" in html
+
+
 def test_cover_page_falls_back_to_gradient_without_a_photo():
     html = _generator(photo=None).render_html(_itinerary())
     assert "background-image" not in html

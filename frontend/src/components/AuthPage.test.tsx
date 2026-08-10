@@ -3,8 +3,13 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthPage } from './AuthPage'
 
-const { login, register } = vi.hoisted(() => ({ login: vi.fn(), register: vi.fn() }))
+const { login, register, forgotPassword } = vi.hoisted(() => ({
+  login: vi.fn(),
+  register: vi.fn(),
+  forgotPassword: vi.fn(),
+}))
 vi.mock('@/lib/useAuth', () => ({ useAuth: () => ({ login, register }) }))
+vi.mock('@/lib/api', () => ({ forgotPassword }))
 
 describe('AuthPage', () => {
   it('defaults to sign in mode', () => {
@@ -83,5 +88,58 @@ describe('AuthPage', () => {
   it('honors initialMode', () => {
     render(<AuthPage initialMode="register" />)
     expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+  })
+
+  it('does not show "Forgot password?" in register mode', async () => {
+    const user = userEvent.setup()
+    render(<AuthPage />)
+    await user.click(screen.getByText("Don't have an account? Register"))
+    expect(screen.queryByText('Forgot password?')).not.toBeInTheDocument()
+  })
+
+  it('switches to forgot-password mode and hides the password field', async () => {
+    const user = userEvent.setup()
+    render(<AuthPage />)
+    await user.click(screen.getByText('Forgot password?'))
+    expect(screen.getByRole('heading', { name: 'Reset your password' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+  })
+
+  it('submits the email to forgotPassword and shows a confirmation', async () => {
+    forgotPassword.mockResolvedValueOnce({ message: 'ok' })
+    const user = userEvent.setup()
+    render(<AuthPage />)
+
+    await user.click(screen.getByText('Forgot password?'))
+    await user.type(screen.getByLabelText('Email'), 'traveler@example.com')
+    await user.click(screen.getByRole('button', { name: 'Send reset link' }))
+
+    expect(forgotPassword).toHaveBeenCalledWith('traveler@example.com')
+    expect(
+      await screen.findByText('If that email is registered, a reset link has been sent.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the same generic confirmation even when forgotPassword rejects', async () => {
+    // The backend always returns 200 for /auth/forgot-password to avoid
+    // leaking which emails are registered — a network-level failure is the
+    // only case that should ever surface as an error here.
+    forgotPassword.mockRejectedValueOnce(new Error('500 Internal Server Error'))
+    const user = userEvent.setup()
+    render(<AuthPage />)
+
+    await user.click(screen.getByText('Forgot password?'))
+    await user.type(screen.getByLabelText('Email'), 'traveler@example.com')
+    await user.click(screen.getByRole('button', { name: 'Send reset link' }))
+
+    expect(await screen.findByText(/Could not/)).toBeInTheDocument()
+  })
+
+  it('returns to sign in from forgot-password mode', async () => {
+    const user = userEvent.setup()
+    render(<AuthPage />)
+    await user.click(screen.getByText('Forgot password?'))
+    await user.click(screen.getByText('Back to sign in'))
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 })

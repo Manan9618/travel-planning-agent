@@ -39,6 +39,11 @@ services:
       DATABASE_URL: postgresql://travel_agent:travel_agent@postgres:5432/travel_agent
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      # Same override reasoning as above: .env's default (:5173, the Vite
+      # dev server) is wrong here — the Dockerized frontend this backend's
+      # password-reset/share-link emails and URLs actually need to point at
+      # is served on :8080 (frontend service's docker-compose port mapping).
+      FRONTEND_BASE_URL: http://localhost:8080
       # JSON logs here regardless of what .env has for local `make serve`
       # (console, human-readable) - a container's logs are meant to be
       # aggregated/queried, not read directly off a terminal.

@@ -83,6 +83,13 @@ class UserStore:
             row = self._conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return UserRecord(**dict(row)) if row else None
 
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET password_hash = ? WHERE user_id = ?", (password_hash, user_id)
+            )
+            self._conn.commit()
+
 
 class PostgresUserStore:
     """Same public interface as `UserStore`, used instead of it whenever
@@ -115,6 +122,12 @@ class PostgresUserStore:
                 "SELECT * FROM users WHERE user_id = %s", (user_id,)
             ).fetchone()
         return UserRecord(**row) if row else None
+
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET password_hash = %s WHERE user_id = %s", (password_hash, user_id)
+            )
 
 
 def build_user_store(database_url: str | None) -> UserStore | PostgresUserStore:

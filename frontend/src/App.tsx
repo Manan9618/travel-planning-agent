@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { downloadPdf, getPlan, refinePlan, resumePlan, startPlan } from '@/lib/api'
+import {
+  downloadCalendar,
+  downloadPdf,
+  fetchPdfBlobUrl,
+  getPlan,
+  refinePlan,
+  resumePlan,
+  startPlan,
+} from '@/lib/api'
 import { usePlanningProgress } from '@/lib/useWebSocket'
 import { useAuth } from '@/lib/useAuth'
 import type { SessionStateResponse, SessionSummary } from '@/types/api'
 import { AuthPage } from '@/components/AuthPage'
 import { LandingPage } from '@/components/LandingPage'
+import { ResetPasswordPage } from '@/components/ResetPasswordPage'
+import { SharedTripView } from '@/components/SharedTripView'
 import { Dashboard } from '@/components/Dashboard'
 import { Header } from '@/components/Header'
 import { MessageBubble } from '@/components/MessageBubble'
@@ -30,6 +40,19 @@ function App() {
   const { user, loading: authLoading, logout } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
   const [showDashboard, setShowDashboard] = useState(true)
+  // A reset link points at this app's root with ?reset_token=... (no
+  // router — see lib/useAuth.tsx) — read once on mount, independent of
+  // auth state, since resetting a password doesn't require being signed
+  // in and should take priority over whatever else is on screen.
+  const [resetToken, setResetToken] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('reset_token'),
+  )
+  // Same pattern, same priority, for a public share link (?shared=...) —
+  // viewing one needs no account either, and should win over whatever
+  // auth state or dashboard is otherwise on screen.
+  const [sharedToken, setSharedToken] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('shared'),
+  )
   const [turns, setTurns] = useState<Turn[]>([])
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
   const [epoch, setEpoch] = useState(0)
@@ -128,6 +151,14 @@ function App() {
     }
   }
 
+  async function handleDownloadCalendar(sessionId: string) {
+    try {
+      await downloadCalendar(sessionId)
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   function startNewTrip() {
     setTurns([])
     setSendError(null)
@@ -151,6 +182,38 @@ function App() {
     }
   }
 
+  if (resetToken) {
+    return (
+      <ResetPasswordPage
+        token={resetToken}
+        onDone={() => {
+          setResetToken(null)
+          // Straight to the sign-in form, not the landing page — "Go to
+          // sign in" right after resetting a password is an unambiguous
+          // next step, no reason to make them click through the pitch again.
+          setShowAuth(true)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('reset_token')
+          window.history.replaceState({}, '', url)
+        }}
+      />
+    )
+  }
+
+  if (sharedToken) {
+    return (
+      <SharedTripView
+        token={sharedToken}
+        onPlanYourOwn={() => {
+          setSharedToken(null)
+          const url = new URL(window.location.href)
+          url.searchParams.delete('shared')
+          window.history.replaceState({}, '', url)
+        }}
+      />
+    )
+  }
+
   if (authLoading) {
     return (
       <div className="flex h-full items-center justify-center bg-paper font-mono text-xs text-ink-faint dark:bg-paper-dark dark:text-ink-faint-dark">
@@ -171,8 +234,11 @@ function App() {
     <div className="flex h-full flex-col bg-paper font-sans dark:bg-paper-dark">
       <Header
         itinerary={displayState?.itinerary ?? null}
+        budgetEvaluation={displayState?.budget_evaluation ?? null}
+        sessionId={displayState?.session_id ?? null}
         onNewTrip={startNewTrip}
         onDownloadPdf={() => displayState && handleDownloadPdf(displayState.session_id)}
+        onDownloadCalendar={() => displayState && handleDownloadCalendar(displayState.session_id)}
         onMyTrips={() => setShowDashboard(true)}
         pdfAvailable={Boolean(displayState?.pdf_path)}
         hasTurns={turns.length > 0}
@@ -317,7 +383,8 @@ function App() {
                 )}
                 {activeTab === 'pdf' && (
                   <PdfPreview
-                    sessionId={displayState.session_id}
+                    cacheKey={displayState.session_id}
+                    fetchUrl={() => fetchPdfBlobUrl(displayState.session_id)}
                     available={Boolean(displayState.pdf_path)}
                   />
                 )}

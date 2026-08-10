@@ -23,11 +23,14 @@ else in this project.
 `sessions.user_id` (added alongside real user accounts, see `api/users.py`
 and `api/auth.py`) links a session to the account that created it, so
 `GET /plan/{id}` and friends can enforce that a user only ever sees their
-own trips. Nullable, and migrated onto pre-existing tables additively (see
-`_add_user_id_column_sqlite`) rather than requiring a fresh database —
-sessions created before accounts existed simply have no owner and become
-unreachable through the now-authenticated endpoints, which is the correct,
-expected consequence of adding real per-user ownership after the fact.
+own trips. `sessions.share_token` (added alongside public share links, see
+`api/app.py`'s `/plan/{id}/share` and `/shared/{token}`) is the opposite:
+an opaque, unguessable token that grants read-only access to anyone who has
+it, no account needed at all. Both columns are nullable and migrated onto
+pre-existing tables additively (see `_add_column_sqlite`) rather than
+requiring a fresh database — sessions created before either feature
+existed simply have no owner/no share link, which is the correct, expected
+consequence of adding both after the fact.
 """
 
 from __future__ import annotations
@@ -61,15 +64,15 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
-def _add_user_id_column_sqlite(conn: sqlite3.Connection) -> None:
+def _add_column_sqlite(conn: sqlite3.Connection, column: str, coltype: str) -> None:
     # `CREATE TABLE IF NOT EXISTS` above only helps a brand-new database —
-    # every `sessions.sqlite` from before real user accounts existed already
-    # has a `sessions` table with no `user_id` column, and SQLite has no
-    # `ADD COLUMN IF NOT EXISTS`. Idempotent by catching the one error
-    # "already has this column" produces, not by checking first (avoids a
-    # TOCTOU race, though this store is already single-connection/locked).
+    # every `sessions.sqlite` from before this column existed already has a
+    # `sessions` table without it, and SQLite has no `ADD COLUMN IF NOT
+    # EXISTS`. Idempotent by catching the one error "already has this
+    # column" produces, not by checking first (avoids a TOCTOU race, though
+    # this store is already single-connection/locked).
     try:
-        conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+        conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {coltype}")
         conn.commit()
     except sqlite3.OperationalError as exc:
         if "duplicate column name" not in str(exc).lower():
@@ -85,6 +88,10 @@ class SessionRecord:
     created_at: str
     updated_at: str
     user_id: str | None = None
+    # Opaque, unguessable token (secrets.token_urlsafe) set by
+    # POST /plan/{id}/share — anyone with it can view this trip read-only
+    # via GET /shared/{token}, no account required. None means not shared.
+    share_token: str | None = None
 
 
 @dataclass
@@ -107,7 +114,8 @@ class SessionStore:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
-            _add_user_id_column_sqlite(self._conn)
+            _add_column_sqlite(self._conn, "user_id", "TEXT")
+            _add_column_sqlite(self._conn, "share_token", "TEXT")
 
     def create(
         self,
@@ -142,6 +150,20 @@ class SessionStore:
             )
             self._conn.commit()
 
+    def delete(self, session_id: str) -> None:
+        # Deliberately does NOT cascade to /refine children (rows with this
+        # as their parent_session_id): they're already unreachable from the
+        # dashboard (list_by_user only returns top-level sessions), so
+        # leaving them in place is harmless orphaned state, the same
+        # "unreachable, not actively cleaned up" outcome pre-account
+        # sessions already have. The LangGraph checkpointer's own state for
+        # this thread_id is likewise left alone — nothing in this project
+        # cleans that up for any session today.
+        with self._lock:
+            self._conn.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+
     def append_event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         with self._lock:
             self._conn.execute(
@@ -167,6 +189,27 @@ class SessionStore:
                 (user_id,),
             ).fetchall()
         return [SessionRecord(**dict(row)) for row in rows]
+
+    def set_share_token(self, session_id: str, token: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET share_token = ? WHERE session_id = ?", (token, session_id)
+            )
+            self._conn.commit()
+
+    def clear_share_token(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET share_token = NULL WHERE session_id = ?", (session_id,)
+            )
+            self._conn.commit()
+
+    def get_by_share_token(self, token: str) -> SessionRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM sessions WHERE share_token = ?", (token,)
+            ).fetchone()
+        return SessionRecord(**dict(row)) if row else None
 
     def get_events(self, session_id: str, after_id: int = 0) -> list[SessionEvent]:
         with self._lock:
@@ -226,6 +269,7 @@ class PostgresSessionStore:
             # Postgres, unlike SQLite, supports ADD COLUMN IF NOT EXISTS
             # directly - no try/except migration dance needed here.
             self._conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT")
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS share_token TEXT")
 
     def create(
         self,
@@ -257,6 +301,30 @@ class PostgresSessionStore:
                 "UPDATE sessions SET status = %s, updated_at = %s WHERE session_id = %s",
                 (status, _now(), session_id),
             )
+
+    def delete(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM events WHERE session_id = %s", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE session_id = %s", (session_id,))
+
+    def set_share_token(self, session_id: str, token: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET share_token = %s WHERE session_id = %s", (token, session_id)
+            )
+
+    def clear_share_token(self, session_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET share_token = NULL WHERE session_id = %s", (session_id,)
+            )
+
+    def get_by_share_token(self, token: str) -> SessionRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM sessions WHERE share_token = %s", (token,)
+            ).fetchone()
+        return SessionRecord(**row) if row else None
 
     def append_event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         with self._lock:

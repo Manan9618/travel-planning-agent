@@ -1,4 +1,9 @@
-from tests.api.conftest import isolated_client, wait_until_terminal
+from tests.api.conftest import (
+    DEFAULT_TEST_EMAIL,
+    FakeEmailSender,
+    isolated_client,
+    wait_until_terminal,
+)
 
 
 def test_register_returns_a_token_and_the_new_user(client):
@@ -145,6 +150,16 @@ def test_another_user_cannot_export_someone_elses_map(app_factory):
     assert resp.status_code == 404
 
 
+def test_another_user_cannot_export_someone_elses_calendar(app_factory):
+    with isolated_client(app_factory()) as owner:
+        session_id = owner.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+        wait_until_terminal(owner, session_id)
+
+    with isolated_client(app_factory()) as stranger:
+        resp = stranger.get(f"/export/{session_id}/calendar")
+    assert resp.status_code == 404
+
+
 def test_refine_creates_the_new_session_under_the_same_user(client):
     session_id = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
     wait_until_terminal(client, session_id)
@@ -207,3 +222,127 @@ def test_sessions_are_ordered_most_recent_first(client):
     resp = client.get("/sessions")
     ids = [s["session_id"] for s in resp.json()["sessions"]]
     assert ids.index(second) < ids.index(first)
+
+
+# --- DELETE /sessions/{id} (delete a trip) ----------------------------------
+
+
+def test_delete_session_without_a_token_is_rejected(app_factory):
+    with isolated_client(app_factory()) as authed:
+        session_id = authed.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+        authed.headers.pop("Authorization")
+        resp = authed.delete(f"/sessions/{session_id}")
+    assert resp.status_code == 401
+
+
+def test_delete_session_removes_it_from_the_list(client):
+    session_id = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+    resp = client.delete(f"/sessions/{session_id}")
+    assert resp.status_code == 204
+
+    ids = [s["session_id"] for s in client.get("/sessions").json()["sessions"]]
+    assert session_id not in ids
+
+
+def test_delete_session_also_404s_get_plan_afterward(client):
+    session_id = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+    client.delete(f"/sessions/{session_id}")
+    resp = client.get(f"/plan/{session_id}")
+    assert resp.status_code == 404
+
+
+def test_delete_unknown_session_is_404(client):
+    resp = client.delete("/sessions/nope")
+    assert resp.status_code == 404
+
+
+def test_another_user_cannot_delete_someone_elses_trip(app_factory):
+    with isolated_client(app_factory()) as owner:
+        session_id = owner.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+
+    with isolated_client(app_factory()) as stranger:
+        resp = stranger.delete(f"/sessions/{session_id}")
+    assert resp.status_code == 404
+
+
+# --- forgot password / reset password ---------------------------------------
+
+
+def _extract_reset_token(email_body: str) -> str:
+    return email_body.split("reset_token=")[1].split()[0]
+
+
+def test_forgot_password_always_returns_200_for_an_unknown_email(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        resp = authed.post("/auth/forgot-password", json={"email": "nobody@example.com"})
+    assert resp.status_code == 200
+    assert fake_email.sent == []  # no account -> no email, but still a 200
+
+
+def test_forgot_password_sends_a_reset_link_for_a_registered_user(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        resp = authed.post("/auth/forgot-password", json={"email": DEFAULT_TEST_EMAIL})
+    assert resp.status_code == 200
+    assert len(fake_email.sent) == 1
+    assert fake_email.sent[0]["to"] == DEFAULT_TEST_EMAIL
+    assert "reset_token=" in fake_email.sent[0]["body"]
+
+
+def test_forgot_password_response_is_identical_for_known_and_unknown_email(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        known = authed.post("/auth/forgot-password", json={"email": DEFAULT_TEST_EMAIL})
+        unknown = authed.post("/auth/forgot-password", json={"email": "nobody@example.com"})
+    assert known.json() == unknown.json()
+
+
+def test_reset_password_with_a_valid_token_lets_the_user_log_in_with_the_new_password(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        authed.post("/auth/forgot-password", json={"email": DEFAULT_TEST_EMAIL})
+        token = _extract_reset_token(fake_email.sent[0]["body"])
+
+        reset_resp = authed.post(
+            "/auth/reset-password", json={"token": token, "new_password": "brand-new-password"}
+        )
+        assert reset_resp.status_code == 200
+
+        old_login = authed.post(
+            "/auth/login", json={"email": DEFAULT_TEST_EMAIL, "password": "hunter2222"}
+        )
+        assert old_login.status_code == 401
+
+        new_login = authed.post(
+            "/auth/login", json={"email": DEFAULT_TEST_EMAIL, "password": "brand-new-password"}
+        )
+        assert new_login.status_code == 200
+
+
+def test_reset_password_with_an_invalid_token_is_rejected(client):
+    resp = client.post(
+        "/auth/reset-password", json={"token": "not-a-real-token", "new_password": "new-password"}
+    )
+    assert resp.status_code == 400
+
+
+def test_reset_password_rejects_a_short_new_password(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        authed.post("/auth/forgot-password", json={"email": DEFAULT_TEST_EMAIL})
+        token = _extract_reset_token(fake_email.sent[0]["body"])
+        resp = authed.post("/auth/reset-password", json={"token": token, "new_password": "short"})
+    assert resp.status_code == 422
+
+
+def test_reset_password_does_not_require_a_bearer_token(app_factory):
+    fake_email = FakeEmailSender()
+    with isolated_client(app_factory(email_sender=fake_email)) as authed:
+        authed.post("/auth/forgot-password", json={"email": DEFAULT_TEST_EMAIL})
+        token = _extract_reset_token(fake_email.sent[0]["body"])
+        authed.headers.pop("Authorization")
+        resp = authed.post(
+            "/auth/reset-password", json={"token": token, "new_password": "brand-new-password"}
+        )
+    assert resp.status_code == 200

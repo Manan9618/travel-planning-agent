@@ -40,6 +40,7 @@ from travel_agent.tools.attraction_finder import AttractionFinderTool
 from travel_agent.tools.budget_optimizer import BudgetOptimizer
 from travel_agent.tools.conflict_detector import ConflictDetector
 from travel_agent.tools.conflict_resolver import ConflictResolver
+from travel_agent.tools.currency_converter import CurrencyConverter
 from travel_agent.tools.flight_search import FlightSearchTool
 from travel_agent.tools.hotel_search import HotelSearchTool
 from travel_agent.tools.itinerary_builder import ItineraryBuilder
@@ -154,9 +155,15 @@ def build_planning_graph(
     render_pdf_map_thumbnail: bool = True,
     supervisor: SupervisorAgent | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    currency_converter: CurrencyConverter | None = None,
 ) -> CompiledStateGraph:
     parser = parser or PreferenceParser()
     flight_tool = flight_tool or FlightSearchTool()
+    # Shared across every step that needs to compare a stated budget
+    # (possibly non-USD) against real provider prices (always USD) — one
+    # instance so its Redis-backed rate cache (see CurrencyConverter) is
+    # actually shared across a run, not rebuilt per step.
+    currency_converter = currency_converter or CurrencyConverter()
     hotel_tool = hotel_tool or HotelSearchTool()
     attraction_tool = attraction_tool or AttractionFinderTool()
     restaurant_tool = restaurant_tool or RestaurantFinderTool()
@@ -170,7 +177,7 @@ def build_planning_graph(
     description_tool = description_tool or AttractionDescriberTool()
     conflict_detector = conflict_detector or ConflictDetector()
     conflict_resolver = conflict_resolver or ConflictResolver()
-    budget_optimizer = budget_optimizer or BudgetOptimizer()
+    budget_optimizer = budget_optimizer or BudgetOptimizer(currency_converter=currency_converter)
     map_generator = map_generator or TravelMapGenerator()
     pdf_generator = pdf_generator or PDFGenerator()
     supervisor = supervisor or SupervisorAgent()
@@ -187,7 +194,9 @@ def build_planning_graph(
 
     graph.add_node("supervisor", make_supervisor_node(supervisor))
     add_instrumented_node(PlanningStep.PARSE_PREFERENCES, make_parse_preferences_node(parser))
-    add_instrumented_node(PlanningStep.SEARCH_FLIGHTS, make_search_flights_node(flight_tool))
+    add_instrumented_node(
+        PlanningStep.SEARCH_FLIGHTS, make_search_flights_node(flight_tool, currency_converter)
+    )
     add_instrumented_node(PlanningStep.SEARCH_HOTELS, make_search_hotels_node(hotel_tool))
     add_instrumented_node(
         PlanningStep.FIND_ATTRACTIONS, make_find_attractions_node(attraction_tool)

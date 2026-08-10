@@ -34,14 +34,28 @@ def estimate_itinerary_cost(itinerary: Itinerary) -> float:
     return sum(itinerary_cost_breakdown(itinerary).values())
 
 
-def budget_adherence_score(itinerary: Itinerary) -> float | None:
+def budget_adherence_score(
+    itinerary: Itinerary, budget_total_usd: float | None = None
+) -> float | None:
     """1.0 = actual spend exactly matches the stated budget; decreases toward 0
     the further actual spend is from budget_total, in either direction (both
     overspending and significant underspending count against "adherence" — the
     plan's own tips call this a target to hit, not just a ceiling to stay under).
     None if no budget was stated, since there's nothing to measure adherence to.
+
+    `estimate_itinerary_cost` is always USD (every provider price this
+    project works with is), so comparing it against `budget_total` only
+    makes sense once `budget_total` is USD too. This module stays "pure
+    computation, no external API" (see the module docstring) rather than
+    depending on `CurrencyConverter` itself — callers that know the
+    itinerary's `budget_currency` isn't USD (currently just
+    `BudgetOptimizer`) convert first and pass the result as
+    `budget_total_usd`; every other caller keeps passing nothing, which
+    preserves the pre-currency-conversion behavior (assume already USD).
     """
-    budget = itinerary.preferences.budget_total
+    budget = (
+        budget_total_usd if budget_total_usd is not None else itinerary.preferences.budget_total
+    )
     if not budget:
         return None
     actual = estimate_itinerary_cost(itinerary)

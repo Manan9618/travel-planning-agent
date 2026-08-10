@@ -59,6 +59,60 @@ def test_list_by_user_returns_empty_for_a_user_with_no_sessions():
     assert _store().list_by_user("nobody") == []
 
 
+def test_delete_removes_the_session():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    store.delete("s1")
+    assert store.get("s1") is None
+
+
+def test_delete_removes_its_events():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    store.append_event("s1", "step_completed", {"step": "search_flights"})
+    store.delete("s1")
+    assert store.get_events("s1") == []
+
+
+def test_delete_does_not_affect_other_sessions():
+    store = _store()
+    store.create("keep", "5 days in Paris")
+    store.create("gone", "3 days in Rome")
+    store.delete("gone")
+    assert store.get("keep") is not None
+
+
+def test_delete_of_an_unknown_session_does_not_raise():
+    _store().delete("nope")  # no-op, not an error
+
+
+def test_new_session_has_no_share_token():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    assert store.get("s1").share_token is None
+
+
+def test_set_share_token_makes_the_session_findable_by_token():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    store.set_share_token("s1", "tok-abc")
+    assert store.get("s1").share_token == "tok-abc"
+    assert store.get_by_share_token("tok-abc").session_id == "s1"
+
+
+def test_get_by_share_token_unknown_token_returns_none():
+    assert _store().get_by_share_token("nope") is None
+
+
+def test_clear_share_token_makes_it_no_longer_findable():
+    store = _store()
+    store.create("s1", "5 days in Paris")
+    store.set_share_token("s1", "tok-abc")
+    store.clear_share_token("s1")
+    assert store.get("s1").share_token is None
+    assert store.get_by_share_token("tok-abc") is None
+
+
 def test_update_status_changes_status_and_updated_at():
     store = _store()
     store.create("s1", "trip")
@@ -152,6 +206,32 @@ def test_user_id_migration_is_idempotent_across_repeated_store_construction():
         db_path = str(Path(tmpdir) / "sessions.sqlite")
         SessionStore(db_path)
         SessionStore(db_path)  # must not raise "duplicate column name"
+
+
+def test_share_token_column_is_added_additively_to_a_pre_existing_database():
+    # Same scenario as user_id's own migration test, but for a database that
+    # predates public share links specifically (even if it already has
+    # user_id, from before share_token existed).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "legacy_sessions.sqlite")
+        legacy_conn = sqlite3.connect(db_path)
+        legacy_conn.execute(
+            "CREATE TABLE sessions ("
+            "session_id TEXT PRIMARY KEY, status TEXT NOT NULL, raw_text TEXT NOT NULL, "
+            "parent_session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+            "user_id TEXT)"
+        )
+        legacy_conn.execute(
+            "INSERT INTO sessions VALUES "
+            "('old-session', 'completed', 'trip', NULL, 'x', 'x', 'user-abc')"
+        )
+        legacy_conn.commit()
+        legacy_conn.close()
+
+        store = SessionStore(db_path)  # must not raise despite the missing column
+        assert store.get("old-session").share_token is None
+        store.set_share_token("old-session", "tok-abc")
+        assert store.get("old-session").share_token == "tok-abc"
 
 
 # --- build_session_store (Week 18: Postgres when DATABASE_URL is set) -----

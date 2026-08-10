@@ -64,5 +64,27 @@ class Settings:
     jwt_secret: str = os.getenv("JWT_SECRET", "dev-insecure-secret-change-me-before-deploying")
     jwt_expire_minutes: int = int(os.getenv("JWT_EXPIRE_MINUTES", str(7 * 24 * 60)))
 
+    # Forgot-password. Short-lived on purpose — a reset link is meant to be
+    # used within minutes of being requested, not saved for later.
+    password_reset_expire_minutes: int = int(os.getenv("PASSWORD_RESET_EXPIRE_MINUTES", "15"))
+
+    # Where the frontend actually lives, so a password-reset email can link
+    # back to it (`{frontend_base_url}/?reset_token=...` — this app has no
+    # router, see lib/useAuth.tsx, so it's a query param on the root, not a
+    # dedicated path). Defaults to the Vite dev server; override for Docker
+    # Compose (:8080) or a real deployment.
+    frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+
+    # SMTP for sending real password-reset emails. Empty (default) disables
+    # real sending — same optional-credential pattern as every other
+    # integration in this file — and EmailSender logs the reset link
+    # instead, which is enough to develop/demo the flow without a real
+    # mail provider configured.
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "no-reply@waypoint.local")
+
 
 settings = Settings()
