@@ -106,6 +106,27 @@ class RefineRequest(BaseModel):
     )
 
 
+class SessionSummary(BaseModel):
+    """One entry in `GET /sessions` — enough to render a trip-history card
+    without fetching each session's full state. Only top-level sessions are
+    listed (not each `/refine` follow-up, which shares its parent's row in
+    the dashboard's mental model of "one entry per trip")."""
+
+    session_id: str = Field(examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"])
+    raw_text: str = Field(examples=["5 days in Paris this September under $2000"])
+    status: str = Field(
+        description="One of: running, completed, awaiting_review, failed.",
+        examples=["completed"],
+    )
+    created_at: str = Field(examples=["2026-08-10T14:49:13.206359+00:00"])
+
+
+class SessionListResponse(BaseModel):
+    """Returned by `GET /sessions` — the current user's trips, most recent first."""
+
+    sessions: list[SessionSummary]
+
+
 class SessionStateResponse(BaseModel):
     """Returned by `GET /plan/{session_id}` — the full current state of a
     planning session, whether still running, completed, awaiting human

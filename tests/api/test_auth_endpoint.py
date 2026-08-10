@@ -156,3 +156,54 @@ def test_refine_creates_the_new_session_under_the_same_user(client):
     # id, this would 404 exactly like the cross-user tests above.
     resp = client.get(f"/plan/{child_id}")
     assert resp.status_code == 200
+
+
+# --- GET /sessions (trip history) ------------------------------------------
+
+
+def test_sessions_without_a_token_is_rejected(app_factory):
+    with isolated_client(app_factory()) as authed:
+        authed.headers.pop("Authorization")
+        resp = authed.get("/sessions")
+    assert resp.status_code == 401
+
+
+def test_sessions_lists_a_trip_the_user_started(client):
+    session_id = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+    resp = client.get("/sessions")
+    assert resp.status_code == 200
+    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    assert session_id in ids
+
+
+def test_sessions_is_empty_for_a_brand_new_user(app_factory):
+    with isolated_client(app_factory()) as authed:
+        resp = authed.get("/sessions")
+    assert resp.json()["sessions"] == []
+
+
+def test_sessions_never_shows_another_users_trips(app_factory):
+    with isolated_client(app_factory()) as owner:
+        owner.post("/plan", json={"raw_text": "5 days in Paris"})
+
+    with isolated_client(app_factory()) as stranger:
+        resp = stranger.get("/sessions")
+    assert resp.json()["sessions"] == []
+
+
+def test_sessions_excludes_refinement_follow_ups(client):
+    session_id = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+    wait_until_terminal(client, session_id)
+    client.post("/refine", json={"session_id": session_id, "raw_text": "add a museum"})
+
+    resp = client.get("/sessions")
+    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    assert ids == [session_id]
+
+
+def test_sessions_are_ordered_most_recent_first(client):
+    first = client.post("/plan", json={"raw_text": "5 days in Paris"}).json()["session_id"]
+    second = client.post("/plan", json={"raw_text": "3 days in Rome"}).json()["session_id"]
+    resp = client.get("/sessions")
+    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    assert ids.index(second) < ids.index(first)

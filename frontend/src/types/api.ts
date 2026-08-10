@@ -49,6 +49,17 @@ export interface UserResponse {
   email: string
 }
 
+export interface SessionSummary {
+  session_id: string
+  raw_text: string
+  status: string
+  created_at: string
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[]
+}
+
 export interface TravelPreferences {
   origin: string | null
   destination: string

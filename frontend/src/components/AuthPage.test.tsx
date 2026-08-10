@@ -66,4 +66,22 @@ describe('AuthPage', () => {
       await screen.findByText('An account with that email already exists.'),
     ).toBeInTheDocument()
   })
+
+  it('does not show a back button when onBack is not given', () => {
+    render(<AuthPage />)
+    expect(screen.queryByText('← Back')).not.toBeInTheDocument()
+  })
+
+  it('calls onBack when the back button is clicked', async () => {
+    const onBack = vi.fn()
+    const user = userEvent.setup()
+    render(<AuthPage onBack={onBack} />)
+    await user.click(screen.getByText('← Back'))
+    expect(onBack).toHaveBeenCalled()
+  })
+
+  it('honors initialMode', () => {
+    render(<AuthPage initialMode="register" />)
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+  })
 })

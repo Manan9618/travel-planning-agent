@@ -5,6 +5,7 @@ interface Props {
   itinerary: Itinerary | null
   onNewTrip: () => void
   onDownloadPdf: () => void
+  onMyTrips: () => void
   pdfAvailable: boolean
   hasTurns: boolean
   userEmail: string
@@ -29,6 +30,7 @@ export function Header({
   itinerary,
   onNewTrip,
   onDownloadPdf,
+  onMyTrips,
   pdfAvailable,
   hasTurns,
   userEmail,
@@ -99,11 +101,18 @@ export function Header({
       )}
 
       <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onMyTrips}
+          className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+        >
+          My Trips
+        </button>
         {hasTurns && (
           <button
             type="button"
             onClick={onNewTrip}
-            className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+            className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
           >
             New trip
           </button>
@@ -113,7 +122,7 @@ export function Header({
             type="button"
             onClick={onDownloadPdf}
             disabled={!pdfAvailable}
-            className="rounded-md bg-ink px-2.5 py-1 font-mono text-[11px] font-medium text-paper hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-ink-dark dark:text-paper-dark"
+            className="rounded-md bg-ink px-2.5 py-1 font-mono text-[11px] font-medium text-paper transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-ink-dark dark:text-paper-dark"
           >
             Export PDF
           </button>
@@ -123,7 +132,7 @@ export function Header({
           type="button"
           onClick={onLogout}
           title={userEmail}
-          className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
+          className="rounded-md px-2 py-1 font-mono text-[11px] text-ink-muted transition-colors hover:bg-paper dark:text-ink-muted-dark dark:hover:bg-paper-dark"
         >
           Log out
         </button>

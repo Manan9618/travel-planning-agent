@@ -1479,6 +1479,54 @@ for real accounts plus a more creative itinerary PDF.
       632 before this work: 45 new for auth/ownership, 16 new for the PDF
       redesign), 84 frontend tests passing
 
+**Post-Plan — Landing Page, Trip History & Motion Polish** — done
+
+A follow-up request to make the app itself more attractive, not just its
+output. Scoped as UI/UX polish rather than new backend capability: real
+accounts already existed, so this makes them worth having.
+
+- [x] **Landing page** (`LandingPage.tsx`): unauthenticated visitors used to
+      land directly on a bare sign-in form with no pitch — now a hero
+      ("Describe your trip. Waypoint plans it."), 4 feature cards, and a
+      "Plan your first trip" CTA into registration. Copy states only real,
+      shipped capabilities (parallel search, budget-awareness, plain-English
+      refinement, PDF/map export) rather than aspirational claims. No router
+      library exists in this app, so it's a third state-based screen
+      alongside the existing auth gate, toggled the same way `AuthPage` is
+- [x] **Trip-history dashboard** (`Dashboard.tsx` + `GET /sessions`): logging
+      in used to always drop a user into a blank planner with no memory of
+      past trips. New `GET /sessions` (backed by `SessionStore.list_by_user`,
+      dual SQLite/Postgres like every other store method) lists a user's
+      trips, most recent first — deliberately top-level sessions only
+      (`parent_session_id IS NULL`), one card per trip a user started via
+      `/plan`, not one per `/refine` follow-up, matching how a user actually
+      thinks about "my trips" rather than every intermediate revision.
+      Clicking a card reopens that session's saved state via the existing
+      `GET /plan/{id}`; a "My Trips" button in the header returns to it at
+      any time. Known, accepted limitation: reopening a trip shows the
+      state of the session card that was clicked, not necessarily a later
+      `/refine` of it (refinements live under a different session_id) — this
+      was a deliberate simplicity-over-completeness call rather than
+      building parent-chain traversal to reconstruct "the latest revision"
+- [x] **Motion polish**: a single restrained `animate-fade-in` CSS primitive
+      (`prefers-reduced-motion`-aware) reused for new chat messages, tab
+      content switching, and the trip list, instead of each component
+      inventing its own animation; `transition-colors`/`transition-opacity`
+      added to every hover state across the app that previously changed
+      instantly. Kept intentionally subtle — the existing design system is
+      explicit about one accent color and no UI-chrome rainbow, and that
+      restraint extends to motion, not just color
+- [x] Live-verified against the real Dockerized stack via the
+      `browser-automation` skill: landing page → CTA → back button →
+      register → empty-dashboard state → plan a trip → trip appears in the
+      dashboard on return → logout, zero console errors, zero failed
+      requests, at every step
+- [x] 703 backend tests passing (11 skip without local Postgres, up from
+      693: 5 new for `list_by_user`, 6 new for `GET /sessions`), 97 frontend
+      tests passing (up from 84: 3 for `LandingPage`, 6 for `Dashboard`, 3
+      more for `AuthPage`'s new back-button/initial-mode behavior, 1 for
+      `Header`'s new My Trips button)
+
 ## Setup
 
 ```bash

@@ -4,6 +4,7 @@ import type {
   PlanResponse,
   RefineRequest,
   ResumeRequest,
+  SessionListResponse,
   SessionStateResponse,
   UserResponse,
 } from '@/types/api'
@@ -68,6 +69,10 @@ export function startPlan(rawText: string): Promise<PlanResponse> {
 
 export function getPlan(sessionId: string): Promise<SessionStateResponse> {
   return request(`/plan/${sessionId}`)
+}
+
+export function listSessions(): Promise<SessionListResponse> {
+  return request('/sessions')
 }
 
 export function resumePlan(sessionId: string, approved: boolean): Promise<PlanResponse> {

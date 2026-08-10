@@ -156,6 +156,18 @@ class SessionStore:
             rows = self._conn.execute("SELECT session_id FROM sessions").fetchall()
         return [row["session_id"] for row in rows]
 
+    def list_by_user(self, user_id: str) -> list[SessionRecord]:
+        # Only top-level sessions (no parent) — one row per trip a user
+        # started via /plan, not one per /refine follow-up too, matching the
+        # dashboard's "one card per trip" mental model.
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM sessions WHERE user_id = ? AND parent_session_id IS NULL "
+                "ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [SessionRecord(**dict(row)) for row in rows]
+
     def get_events(self, session_id: str, after_id: int = 0) -> list[SessionEvent]:
         with self._lock:
             rows = self._conn.execute(
@@ -258,6 +270,15 @@ class PostgresSessionStore:
         with self._lock:
             rows = self._conn.execute("SELECT session_id FROM sessions").fetchall()
         return [row["session_id"] for row in rows]
+
+    def list_by_user(self, user_id: str) -> list[SessionRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM sessions WHERE user_id = %s AND parent_session_id IS NULL "
+                "ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [SessionRecord(**row) for row in rows]
 
     def get_events(self, session_id: str, after_id: int = 0) -> list[SessionEvent]:
         with self._lock:

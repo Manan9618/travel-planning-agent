@@ -39,7 +39,10 @@ export function Tabs({ tabs, active, onChange, children }: Props) {
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-surface dark:bg-surface-dark">
+      <div
+        key={active}
+        className="min-h-0 flex-1 animate-fade-in overflow-y-auto bg-surface dark:bg-surface-dark"
+      >
         {children}
       </div>
     </div>

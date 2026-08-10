@@ -31,6 +31,34 @@ def test_create_with_parent_session_id():
     assert store.get("child").parent_session_id == "parent"
 
 
+def test_list_by_user_returns_only_that_users_top_level_sessions():
+    store = _store()
+    store.create("mine", "5 days in Paris", user_id="u1")
+    store.create("theirs", "3 days in Rome", user_id="u2")
+    records = store.list_by_user("u1")
+    assert [r.session_id for r in records] == ["mine"]
+
+
+def test_list_by_user_excludes_refinement_sessions():
+    store = _store()
+    store.create("root", "5 days in Paris", user_id="u1")
+    store.create("refinement", "add a museum", parent_session_id="root", user_id="u1")
+    records = store.list_by_user("u1")
+    assert [r.session_id for r in records] == ["root"]
+
+
+def test_list_by_user_orders_most_recent_first():
+    store = _store()
+    store.create("first", "trip one", user_id="u1")
+    store.create("second", "trip two", user_id="u1")
+    records = store.list_by_user("u1")
+    assert [r.session_id for r in records] == ["second", "first"]
+
+
+def test_list_by_user_returns_empty_for_a_user_with_no_sessions():
+    assert _store().list_by_user("nobody") == []
+
+
 def test_update_status_changes_status_and_updated_at():
     store = _store()
     store.create("s1", "trip")

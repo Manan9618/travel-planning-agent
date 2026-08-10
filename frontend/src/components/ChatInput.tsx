@@ -47,7 +47,7 @@ export const ChatInput = forwardRef<HTMLTextAreaElement, Props>(function ChatInp
         type="button"
         onClick={submit}
         disabled={disabled || !value.trim()}
-        className="shrink-0 rounded-lg bg-accent px-3.5 py-2 font-mono text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-accent-dark dark:text-paper-dark"
+        className="shrink-0 rounded-lg bg-accent px-3.5 py-2 font-mono text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-accent-dark dark:text-paper-dark"
       >
         Send
       </button>

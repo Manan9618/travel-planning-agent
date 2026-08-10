@@ -58,3 +58,30 @@ body {
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/* A single, restrained motion primitive reused everywhere something new
+   appears (a chat message, a tab's content, a trip card) instead of each
+   component inventing its own animation — kept short and subtle rather than
+   a showy slide, matching the rest of the UI's editorial restraint. Respects
+   prefers-reduced-motion since this is purely decorative, never load-bearing
+   for comprehension. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in {
+    animation: none;
+  }
+}

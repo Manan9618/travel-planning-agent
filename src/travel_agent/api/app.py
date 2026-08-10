@@ -100,7 +100,9 @@ from travel_agent.api.schemas import (
     RefineRequest,
     RegisterRequest,
     ResumeRequest,
+    SessionListResponse,
     SessionStateResponse,
+    SessionSummary,
     UserResponse,
 )
 from travel_agent.api.sessions import PostgresSessionStore, SessionStore, build_session_store
@@ -316,6 +318,32 @@ def create_app(
     )
     async def me(current_user: UserRecord = Depends(get_current_user)) -> UserResponse:
         return UserResponse(user_id=current_user.user_id, email=current_user.email)
+
+    @app.get(
+        "/sessions",
+        response_model=SessionListResponse,
+        dependencies=[Depends(verify_api_key)],
+        tags=["sessions"],
+        summary="List my trips",
+        description="Returns the current user's trips, most recent first — "
+        "one entry per top-level /plan request (not one per /refine "
+        "follow-up), for a trip-history dashboard.",
+    )
+    async def list_sessions(
+        current_user: UserRecord = Depends(get_current_user),
+    ) -> SessionListResponse:
+        records = session_store.list_by_user(current_user.user_id)
+        return SessionListResponse(
+            sessions=[
+                SessionSummary(
+                    session_id=r.session_id,
+                    raw_text=r.raw_text,
+                    status=r.status,
+                    created_at=r.created_at,
+                )
+                for r in records
+            ]
+        )
 
     def _config(session_id: str) -> dict:
         # LangGraph's default recursion_limit (25) counts each worker-step ->

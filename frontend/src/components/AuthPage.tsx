@@ -11,8 +11,13 @@ function friendlyError(mode: Mode, message: string): string {
   return mode === 'login' ? 'Could not sign in. Please try again.' : 'Could not create your account.'
 }
 
-export function AuthPage() {
-  const [mode, setMode] = useState<Mode>('login')
+interface Props {
+  initialMode?: Mode
+  onBack?: () => void
+}
+
+export function AuthPage({ initialMode = 'login', onBack }: Props) {
+  const [mode, setMode] = useState<Mode>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -39,7 +44,17 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-paper px-4 font-sans dark:bg-paper-dark">
+    <div className="relative flex h-full flex-col items-center justify-center bg-paper px-4 font-sans dark:bg-paper-dark">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="absolute left-4 top-4 font-mono text-[11px] text-ink-muted transition-colors hover:text-ink dark:text-ink-muted-dark dark:hover:text-ink-dark"
+        >
+          ← Back
+        </button>
+      )}
+
       <div className="mb-6 flex items-center gap-2">
         <span className="flex h-7 w-7 items-center justify-center rounded bg-ink text-xs font-bold text-paper dark:bg-ink-dark dark:text-paper-dark">
           W
@@ -108,7 +123,7 @@ export function AuthPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-accent px-3.5 py-2 font-mono text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-accent-dark dark:text-paper-dark"
+            className="w-full rounded-lg bg-accent px-3.5 py-2 font-mono text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-accent-dark dark:text-paper-dark"
           >
             {submitting ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
@@ -117,7 +132,7 @@ export function AuthPage() {
         <button
           type="button"
           onClick={toggleMode}
-          className="mt-4 w-full text-center font-mono text-[11px] text-ink-muted hover:text-ink dark:text-ink-muted-dark dark:hover:text-ink-dark"
+          className="mt-4 w-full text-center font-mono text-[11px] text-ink-muted transition-colors hover:text-ink dark:text-ink-muted-dark dark:hover:text-ink-dark"
         >
           {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
         </button>

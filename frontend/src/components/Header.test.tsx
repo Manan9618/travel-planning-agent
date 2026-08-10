@@ -52,6 +52,7 @@ describe('Header', () => {
         hasTurns={false}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     expect(screen.getByText('AI Travel Planning Agent')).toBeInTheDocument()
@@ -67,6 +68,7 @@ describe('Header', () => {
         hasTurns={true}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     expect(screen.getByText(/Paris/)).toBeInTheDocument()
@@ -83,6 +85,7 @@ describe('Header', () => {
         hasTurns={false}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     expect(screen.queryByText('New trip')).not.toBeInTheDocument()
@@ -100,6 +103,7 @@ describe('Header', () => {
         hasTurns={true}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     await user.click(screen.getByText('New trip'))
@@ -116,6 +120,7 @@ describe('Header', () => {
         hasTurns={true}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     expect(screen.getByRole('button', { name: 'Export PDF' })).toBeDisabled()
@@ -133,6 +138,7 @@ describe('Header', () => {
         hasTurns={true}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     await user.click(screen.getByRole('button', { name: 'Export PDF' }))
@@ -149,6 +155,7 @@ describe('Header', () => {
         hasTurns={true}
         userEmail="traveler@example.com"
         onLogout={vi.fn()}
+        onMyTrips={vi.fn()}
       />,
     )
     expect(screen.getByText(/\/\$1,000/)).toBeInTheDocument()
@@ -166,9 +173,29 @@ describe('Header', () => {
         hasTurns={false}
         userEmail="traveler@example.com"
         onLogout={onLogout}
+        onMyTrips={vi.fn()}
       />,
     )
     await user.click(screen.getByText('Log out'))
     expect(onLogout).toHaveBeenCalled()
+  })
+
+  it('calls onMyTrips when My Trips is clicked', async () => {
+    const onMyTrips = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <Header
+        itinerary={null}
+        onNewTrip={vi.fn()}
+        onDownloadPdf={vi.fn()}
+        pdfAvailable={false}
+        hasTurns={false}
+        userEmail="traveler@example.com"
+        onLogout={vi.fn()}
+        onMyTrips={onMyTrips}
+      />,
+    )
+    await user.click(screen.getByText('My Trips'))
+    expect(onMyTrips).toHaveBeenCalled()
   })
 })

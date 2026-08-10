@@ -7,7 +7,7 @@ interface Props {
 export function MessageBubble({ role, children, tone = 'default' }: Props) {
   const isUser = role === 'user'
   return (
-    <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full animate-fade-in ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={[
           'max-w-[90%] rounded-xl px-3.5 py-2.5 text-sm whitespace-pre-wrap',
