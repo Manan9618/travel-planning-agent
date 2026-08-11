@@ -1743,6 +1743,49 @@ all; both work side by side on the same account.
       Google's real token endpoint with a fake code) was also hit directly
       over real HTTP and confirmed to redirect correctly
 
+**Week 24 — Demo Video, Final Polish & Launch** — done
+
+- [x] **Final code review**: swept `src/` and `frontend/src/` for TODO/
+      FIXME/XXX markers, stray `console.log`/`print()` debug statements,
+      and `debugger` statements — none found. Full lint clean (`ruff`,
+      `black`, `oxlint`) and a clean `tsc -p tsconfig.app.json`
+- [x] **Demo video script** (`docs/DEMO_SCRIPT.md`): a scene-by-scene,
+      ~4-minute narration script covering 3 real scenarios — core planning,
+      multi-destination + currency conversion, and accounts/sharing — every
+      claim in it traces back to a real number already in this README or
+      `docs/EVALUATION_REPORT.md`, not a new unverified claim invented for
+      the video
+- [x] **2 new real demo GIFs** alongside the existing Week 23 `demo.gif`:
+      `docs/assets/demo-multidestination.gif` (a real "5 days split between
+      Paris and Rome... under 3000 EUR" run) and `docs/assets/demo-sharing.gif`
+      (register → plan → share → log out → open the link with zero
+      session). Both captured the same way as the original — a real
+      Playwright session against the actual running app and real APIs,
+      recorded to video via Playwright's own `recordVideo`, then sped up
+      and palette-optimized into a GIF with `ffmpeg` (matches Week 23's
+      "assembled with ffmpeg" method, since there was no reusable capture
+      script left in the repo from that pass)
+- [x] **GitHub Pages landing page** (`docs/index.html`): a hand-built
+      static page (not Jekyll-rendered markdown — `docs/.nojekyll`
+      disables Jekyll entirely, so the page renders exactly as authored),
+      matching the app's own design tokens (`--color-paper`/`--color-ink`/
+      `--color-accent` from `frontend/src/index.css`), covering the same
+      3 real scenarios as the demo script plus this project's own real,
+      verified numbers. Enabled via the GitHub Pages API
+      (`main` branch, `/docs` path) and live-verified (built successfully,
+      `200` on the real URL): **https://manan9618.github.io/travel-planning-agent/**
+- [x] **v1.0.0 tag + GitHub Release** (`docs/RELEASE_NOTES_v1.0.0.md`): the
+      first tagged release, summarizing the full 24-week build plus
+      everything added after it, with the same "documented honestly, not
+      glossed over" limitations section every other artifact in this
+      project already uses
+- [x] **Community launch copy drafted, not auto-posted**: LinkedIn/
+      HackerNews/Reddit post text and a short list of relevant AI project
+      showcases (`docs/LAUNCH_COPY.md`) — actually posting needs a real
+      account with a human behind it, so this step stops at drafts ready
+      to review and publish, deliberately not something done
+      autonomously on the user's behalf
+
 ## Setup
 
 ```bash
