@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useAuth } from '@/lib/useAuth'
-import { forgotPassword } from '@/lib/api'
+import { forgotPassword, googleLoginUrl } from '@/lib/api'
 
 type Mode = 'login' | 'register' | 'forgot'
 
@@ -13,12 +13,24 @@ function friendlyError(mode: Mode, message: string): string {
   return mode === 'login' ? 'Could not sign in. Please try again.' : 'Could not create your account.'
 }
 
+// `oauthError` comes from `?oauth_error=<code>` on the URL — the backend's
+// own vocabulary of failure reasons for `/auth/google/callback` (see
+// api/app.py) — mapped here to copy a user actually understands.
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  not_configured: 'Google sign-in isn’t set up on this server yet.',
+  denied: 'Google sign-in was cancelled.',
+  invalid_state: 'That Google sign-in link expired. Please try again.',
+  invalid_request: 'Something went wrong with Google sign-in. Please try again.',
+  exchange_failed: 'Could not complete Google sign-in. Please try again.',
+}
+
 interface Props {
   initialMode?: Mode
   onBack?: () => void
+  oauthError?: string | null
 }
 
-export function AuthPage({ initialMode = 'login', onBack }: Props) {
+export function AuthPage({ initialMode = 'login', onBack, oauthError = null }: Props) {
   const [mode, setMode] = useState<Mode>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -94,6 +106,12 @@ export function AuthPage({ initialMode = 'login', onBack }: Props) {
               ? 'Create an account to start planning trips.'
               : "Enter your account's email and we'll send you a reset link."}
         </p>
+
+        {oauthError && (
+          <p className="mt-3 rounded-md bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700 dark:bg-red-950/40 dark:text-red-400">
+            {OAUTH_ERROR_MESSAGES[oauthError] ?? OAUTH_ERROR_MESSAGES.exchange_failed}
+          </p>
+        )}
 
         {mode === 'forgot' && forgotSubmitted ? (
           <div className="mt-5 space-y-4">
@@ -192,6 +210,42 @@ export function AuthPage({ initialMode = 'login', onBack }: Props) {
               </button>
             )}
           </form>
+        )}
+
+        {mode !== 'forgot' && (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-line dark:bg-line-dark" />
+              <span className="font-mono text-[10px] uppercase tracking-wide text-ink-faint dark:text-ink-faint-dark">
+                or
+              </span>
+              <div className="h-px flex-1 bg-line dark:bg-line-dark" />
+            </div>
+            <a
+              href={googleLoginUrl()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-line px-3.5 py-2 font-mono text-xs font-medium text-ink transition-colors hover:bg-paper dark:border-line-dark dark:text-ink-dark dark:hover:bg-paper-dark"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path
+                  fill="#4285F4"
+                  d="M23.52 12.27c0-.85-.08-1.66-.22-2.45H12v4.64h6.47c-.28 1.5-1.13 2.77-2.4 3.62v3h3.88c2.27-2.09 3.57-5.17 3.57-8.81z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.96-1.07 7.95-2.92l-3.88-3c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.26v3.11C3.24 21.3 7.28 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.27 14.27a7.24 7.24 0 0 1 0-4.54v-3.1H1.26a12 12 0 0 0 0 10.75l4.01-3.11z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.76 0 3.35.6 4.6 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0 7.28 0 3.24 2.7 1.26 6.63l4.01 3.11C6.22 6.9 8.87 4.75 12 4.75z"
+                />
+              </svg>
+              Continue with Google
+            </a>
+          </>
         )}
 
         {mode !== 'forgot' && (

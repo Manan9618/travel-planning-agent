@@ -9,7 +9,10 @@ const { login, register, forgotPassword } = vi.hoisted(() => ({
   forgotPassword: vi.fn(),
 }))
 vi.mock('@/lib/useAuth', () => ({ useAuth: () => ({ login, register }) }))
-vi.mock('@/lib/api', () => ({ forgotPassword }))
+vi.mock('@/lib/api', () => ({
+  forgotPassword,
+  googleLoginUrl: () => 'http://localhost:8000/auth/google/login',
+}))
 
 describe('AuthPage', () => {
   it('defaults to sign in mode', () => {
@@ -141,5 +144,40 @@ describe('AuthPage', () => {
     await user.click(screen.getByText('Forgot password?'))
     await user.click(screen.getByText('Back to sign in'))
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('shows a "Continue with Google" link pointing at the backend login route', () => {
+    render(<AuthPage />)
+    const link = screen.getByRole('link', { name: /Continue with Google/i })
+    expect(link).toHaveAttribute('href', 'http://localhost:8000/auth/google/login')
+  })
+
+  it('shows the Google link in register mode too', async () => {
+    const user = userEvent.setup()
+    render(<AuthPage />)
+    await user.click(screen.getByText("Don't have an account? Register"))
+    expect(screen.getByRole('link', { name: /Continue with Google/i })).toBeInTheDocument()
+  })
+
+  it('hides the Google link in forgot-password mode', async () => {
+    const user = userEvent.setup()
+    render(<AuthPage />)
+    await user.click(screen.getByText('Forgot password?'))
+    expect(screen.queryByRole('link', { name: /Continue with Google/i })).not.toBeInTheDocument()
+  })
+
+  it('shows a friendly message for a known oauth_error code', () => {
+    render(<AuthPage oauthError="denied" />)
+    expect(screen.getByText('Google sign-in was cancelled.')).toBeInTheDocument()
+  })
+
+  it('falls back to a generic message for an unrecognized oauth_error code', () => {
+    render(<AuthPage oauthError="something_unexpected" />)
+    expect(screen.getByText('Could not complete Google sign-in. Please try again.')).toBeInTheDocument()
+  })
+
+  it('shows no oauth error message when oauthError is not set', () => {
+    render(<AuthPage />)
+    expect(screen.queryByText(/Google sign-in/)).not.toBeInTheDocument()
   })
 })

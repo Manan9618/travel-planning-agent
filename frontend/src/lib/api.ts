@@ -65,6 +65,13 @@ export function getCurrentUser(): Promise<UserResponse> {
   return request('/auth/me')
 }
 
+// "Continue with Google" is a full-page redirect (the browser has to
+// actually visit Google's consent screen), not a fetch() — this just
+// builds the URL a button's href/window.location.href points at.
+export function googleLoginUrl(): string {
+  return `${API_BASE_URL}/auth/google/login`
+}
+
 export function forgotPassword(email: string): Promise<MessageResponse> {
   return request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) })
 }

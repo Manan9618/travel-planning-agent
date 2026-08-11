@@ -100,6 +100,38 @@ describe('useAuth', () => {
     expect(result.current.error).toMatch(/401/)
   })
 
+  it('loginWithToken adopts a pre-issued token and sets the user', async () => {
+    getCurrentUser.mockResolvedValueOnce({ user_id: 'u3', email: 'traveler@example.com' })
+    const { result } = renderAuth()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => {
+      await result.current.loginWithToken('google-issued-token')
+    })
+
+    expect(setAuthToken).toHaveBeenCalledWith('google-issued-token')
+    expect(result.current.user).toEqual({ user_id: 'u3', email: 'traveler@example.com' })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('loginWithToken clears the token again if it does not actually validate', async () => {
+    getCurrentUser.mockRejectedValueOnce(new Error('401 Unauthorized'))
+    const { result } = renderAuth()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => {
+      await expect(result.current.loginWithToken('bad-token')).rejects.toThrow()
+    })
+
+    expect(result.current.user).toBeNull()
+    expect(result.current.error).toMatch(/401/)
+    // Called with the token to adopt it, then again with null to drop it —
+    // the second call is what matters here (a token that fails getCurrentUser
+    // must not linger in storage as if it were still good).
+    expect(setAuthToken).toHaveBeenCalledWith('bad-token')
+    expect(setAuthToken).toHaveBeenLastCalledWith(null)
+  })
+
   it('logout clears the token and the user', async () => {
     login.mockResolvedValueOnce({
       access_token: 'tok',

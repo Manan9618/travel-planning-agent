@@ -71,6 +71,50 @@ def test_duplicate_email_raises():
         store.create("u2", "traveler@example.com", "hash2")
 
 
+# --- google_id (Google OAuth sign-in) --------------------------------------
+
+
+def test_create_with_google_id_round_trips():
+    store = _store()
+    store.create("u1", "traveler@example.com", "unusable-hash", google_id="google-123")
+    record = store.get_by_id("u1")
+    assert record.google_id == "google-123"
+
+
+def test_google_id_defaults_to_none_for_a_normal_account():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hashed-password")
+    assert store.get_by_id("u1").google_id is None
+
+
+def test_get_by_google_id_finds_the_record():
+    store = _store()
+    store.create("u1", "traveler@example.com", "unusable-hash", google_id="google-123")
+    record = store.get_by_google_id("google-123")
+    assert record is not None
+    assert record.user_id == "u1"
+
+
+def test_get_by_google_id_unknown_returns_none():
+    assert _store().get_by_google_id("nope") is None
+
+
+def test_link_google_id_sets_it_on_an_existing_account():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hashed-password")
+    store.link_google_id("u1", "google-456")
+    record = store.get_by_id("u1")
+    assert record.google_id == "google-456"
+    assert record.password_hash == "hashed-password"  # untouched
+
+
+def test_link_google_id_makes_the_account_findable_by_google_id():
+    store = _store()
+    store.create("u1", "traveler@example.com", "hashed-password")
+    store.link_google_id("u1", "google-456")
+    assert store.get_by_google_id("google-456").user_id == "u1"
+
+
 # --- build_user_store (Postgres when DATABASE_URL is set) -----------------
 
 

@@ -86,5 +86,25 @@ class Settings:
     smtp_password: str = os.getenv("SMTP_PASSWORD", "")
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "no-reply@waypoint.local")
 
+    # Google OAuth ("Continue with Google"). Empty (default) disables it —
+    # same optional-credential pattern as every other integration in this
+    # file — `/auth/google/login` redirects straight back to the frontend
+    # with `?oauth_error=not_configured` instead of erroring. Get these
+    # from a Google Cloud Console OAuth 2.0 Client ID (Web application),
+    # with this app's own callback URL below added as an authorized
+    # redirect URI.
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+    # Where THIS backend itself is reachable, so /auth/google/login can
+    # build a callback URL Google will actually redirect back to
+    # (`{backend_base_url}/auth/google/callback`) and register it as an
+    # authorized redirect URI in the Google Cloud Console. Unlike
+    # `frontend_base_url`, the browser always reaches the backend on the
+    # same port/host in both `make serve` and Docker Compose (see
+    # docker-compose.yml's backend `ports: 8000:8000`), so this needs no
+    # environment-specific override.
+    backend_base_url: str = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
+
 
 settings = Settings()

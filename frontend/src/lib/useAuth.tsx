@@ -14,6 +14,7 @@ interface AuthContextValue {
   error: string | null
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
+  loginWithToken: (token: string) => Promise<void>
   logout: () => void
 }
 
@@ -63,13 +64,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Google sign-in already produced a real bearer token server-side (see
+  // App.tsx's `?oauth_token=` handling) — this just adopts it the same way
+  // the initial-mount effect above does for a token found in localStorage,
+  // rather than duplicating that fetch-user-then-setUser logic a third time.
+  async function loginWithToken(token: string) {
+    setError(null)
+    setAuthToken(token)
+    try {
+      const me = await getCurrentUser()
+      setUser(me)
+    } catch (err) {
+      setAuthToken(null)
+      setError(err instanceof Error ? err.message : String(err))
+      throw err
+    }
+  }
+
   function logout() {
     setAuthToken(null)
     setUser(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, error, login, register, loginWithToken, logout }}
+    >
       {children}
     </AuthContext.Provider>
   )

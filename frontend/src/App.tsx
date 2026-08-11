@@ -37,7 +37,7 @@ interface Turn {
 }
 
 function App() {
-  const { user, loading: authLoading, logout } = useAuth()
+  const { user, loading: authLoading, logout, loginWithToken } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
   const [showDashboard, setShowDashboard] = useState(true)
   // A reset link points at this app's root with ?reset_token=... (no
@@ -52,6 +52,16 @@ function App() {
   // auth state or dashboard is otherwise on screen.
   const [sharedToken, setSharedToken] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('shared'),
+  )
+  // Google sign-in redirects back here with either ?oauth_token=<bearer
+  // token> (success — adopt it below) or ?oauth_error=<reason> (shown on
+  // AuthPage). `oauthProcessing` covers the brief window while the token
+  // is being adopted, so the landing page doesn't flash before it lands.
+  const [oauthError, setOauthError] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('oauth_error'),
+  )
+  const [oauthProcessing, setOauthProcessing] = useState<boolean>(
+    () => new URLSearchParams(window.location.search).has('oauth_token'),
   )
   const [turns, setTurns] = useState<Turn[]>([])
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
@@ -93,6 +103,32 @@ function App() {
       cancelled = true
     }
   }, [liveSessionId, progress.done, progress.awaitingReview, progress.errorMessage, progress.narration])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const oauthToken = params.get('oauth_token')
+    if (!oauthToken && !params.has('oauth_error')) return
+    const cleanupUrl = () => {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('oauth_token')
+      url.searchParams.delete('oauth_error')
+      window.history.replaceState({}, '', url)
+    }
+    if (oauthToken) {
+      loginWithToken(oauthToken)
+        .catch(() => setOauthError('exchange_failed'))
+        .finally(() => {
+          setOauthProcessing(false)
+          cleanupUrl()
+        })
+    } else {
+      cleanupUrl()
+    }
+    // Runs once on mount to consume the URL params Google's redirect (or a
+    // failed attempt) left behind — not meant to re-run as `loginWithToken`
+    // itself changes identity across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -214,7 +250,7 @@ function App() {
     )
   }
 
-  if (authLoading) {
+  if (authLoading || oauthProcessing) {
     return (
       <div className="flex h-full items-center justify-center bg-paper font-mono text-xs text-ink-faint dark:bg-paper-dark dark:text-ink-faint-dark">
         Loading…
@@ -223,8 +259,14 @@ function App() {
   }
 
   if (!user) {
-    return showAuth ? (
-      <AuthPage onBack={() => setShowAuth(false)} />
+    return showAuth || oauthError ? (
+      <AuthPage
+        onBack={() => {
+          setShowAuth(false)
+          setOauthError(null)
+        }}
+        oauthError={oauthError}
+      />
     ) : (
       <LandingPage onSignIn={() => setShowAuth(true)} onGetStarted={() => setShowAuth(true)} />
     )

@@ -3,12 +3,14 @@ from fastapi import HTTPException
 
 from travel_agent.api.auth import (
     create_access_token,
+    create_oauth_state_token,
     create_reset_token,
     decode_access_token,
     decode_reset_token,
     extract_bearer_token,
     hash_password,
     is_valid_email,
+    verify_oauth_state_token,
     verify_password,
 )
 
@@ -132,6 +134,53 @@ def test_decode_access_token_rejects_a_real_reset_token():
     with pytest.raises(HTTPException) as exc_info:
         decode_access_token(token)
     assert exc_info.value.status_code == 401
+
+
+# --- oauth state token (Google sign-in CSRF protection) -------------------
+
+
+def test_oauth_state_token_verifies_successfully():
+    token = create_oauth_state_token()
+    verify_oauth_state_token(token)  # does not raise
+
+
+def test_oauth_state_token_is_different_every_time():
+    # Two calls in the same second would otherwise produce byte-identical
+    # tokens (same iat/exp/purpose) — a real nonce is what actually makes
+    # each sign-in attempt's state unguessable/unique.
+    assert create_oauth_state_token() != create_oauth_state_token()
+
+
+def test_verify_oauth_state_token_rejects_garbage():
+    with pytest.raises(HTTPException) as exc_info:
+        verify_oauth_state_token("not-a-real-token")
+    assert exc_info.value.status_code == 400
+
+
+def test_verify_oauth_state_token_rejects_an_expired_token(monkeypatch):
+    import travel_agent.api.auth as auth_module
+
+    monkeypatch.setattr(auth_module, "_OAUTH_STATE_EXPIRE_MINUTES", -1)
+    token = create_oauth_state_token()
+    with pytest.raises(HTTPException) as exc_info:
+        verify_oauth_state_token(token)
+    assert exc_info.value.status_code == 400
+
+
+def test_verify_oauth_state_token_rejects_a_real_access_token():
+    # Signed with the same secret, would otherwise decode fine — the
+    # `purpose` claim is what stops it from being replayed as OAuth state.
+    token = create_access_token("user-123")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_oauth_state_token(token)
+    assert exc_info.value.status_code == 400
+
+
+def test_verify_oauth_state_token_rejects_a_real_reset_token():
+    token = create_reset_token("user-123")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_oauth_state_token(token)
+    assert exc_info.value.status_code == 400
 
 
 # --- bearer token extraction ---------------------------------------------

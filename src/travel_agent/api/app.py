@@ -16,7 +16,13 @@ Exposes the LangGraph planning pipeline (Weeks 1-14) over HTTP + WebSocket:
   distinct from a bearer token (`create_reset_token`/`decode_reset_token`)
   emailed via `EmailSender` — which logs the reset link instead of sending
   when SMTP isn't configured, same graceful-degradation pattern as every
-  other optional integration in this project.
+  other optional integration in this project. `GET /auth/google/login` +
+  `/callback` add "Continue with Google" — same JWT bearer token out the
+  other end as register/login, just reached via Google's consent screen
+  instead of a password (`tools/google_oauth.py`'s `GoogleOAuthClient`;
+  matched to an existing account by Google's own account id first, then by
+  email, so a password account signing in with Google for the first time
+  gets linked rather than duplicated).
 - `POST /plan` starts a new planning run in the background and returns
   immediately (202 — see "async processing" below); `GET /plan/{session_id}`
   polls status/results.
@@ -84,7 +90,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -100,12 +106,14 @@ from travel_agent.agents.graph import (
 from travel_agent.agents.refinement import SEARCH_STEP_STATE_FIELD, build_refinement_seed
 from travel_agent.api.auth import (
     create_access_token,
+    create_oauth_state_token,
     create_reset_token,
     decode_access_token,
     decode_reset_token,
     extract_bearer_token,
     hash_password,
     is_valid_email,
+    verify_oauth_state_token,
     verify_password,
 )
 from travel_agent.api.schemas import (
@@ -139,6 +147,7 @@ from travel_agent.observability.metrics import PLANNING_DURATION
 from travel_agent.observability.sentry import init_sentry
 from travel_agent.tools.calendar_export import generate_ics
 from travel_agent.tools.email_sender import EmailSender
+from travel_agent.tools.google_oauth import GoogleOAuthClient
 from travel_agent.tools.itinerary_narrator import ItineraryNarrator
 from travel_agent.tools.preference_parser import PreferenceParser
 
@@ -166,6 +175,7 @@ def create_app(
     narrator: ItineraryNarrator | None = None,
     parser: PreferenceParser | None = None,
     email_sender: EmailSender | None = None,
+    google_oauth: GoogleOAuthClient | None = None,
 ) -> FastAPI:
     # Called here, not at module import time, for the same reason
     # build_planning_graph()/SessionStore() aren't module-level singletons
@@ -204,6 +214,9 @@ def create_app(
     narrator = narrator or ItineraryNarrator()
     parser = parser or PreferenceParser()
     email_sender = email_sender or EmailSender()
+    google_oauth = google_oauth or GoogleOAuthClient(
+        client_id=settings.google_client_id, client_secret=settings.google_client_secret
+    )
 
     def get_current_user(authorization: str | None = Header(default=None)) -> UserRecord:
         """FastAPI dependency: the authenticated user, from a real JWT
@@ -393,6 +406,83 @@ def create_app(
     )
     async def me(current_user: UserRecord = Depends(get_current_user)) -> UserResponse:
         return UserResponse(user_id=current_user.user_id, email=current_user.email)
+
+    def _google_callback_url() -> str:
+        return f"{settings.backend_base_url}/auth/google/callback"
+
+    @app.get(
+        "/auth/google/login",
+        tags=["auth"],
+        summary="Start Google sign-in",
+        description="Redirects to Google's own consent screen. Not behind "
+        "`verify_api_key`, for the same reason /auth/register isn't — there's "
+        "no bearer token to send yet. If GOOGLE_CLIENT_ID/SECRET aren't "
+        "configured, redirects straight back to the frontend with "
+        "`?oauth_error=not_configured` instead of erroring, the same "
+        "optional-credential degradation every other integration in this "
+        "project uses.",
+    )
+    @limiter.limit(AUTH_RATE_LIMIT)
+    async def google_login(request: Request) -> RedirectResponse:
+        if not google_oauth.configured:
+            return RedirectResponse(f"{settings.frontend_base_url}/?oauth_error=not_configured")
+        state = create_oauth_state_token()
+        return RedirectResponse(google_oauth.authorize_url(_google_callback_url(), state))
+
+    @app.get(
+        "/auth/google/callback",
+        tags=["auth"],
+        summary="Google sign-in callback",
+        description="Where Google redirects back to after the consent "
+        "screen. Exchanges the one-time code for an access token, looks up "
+        "or creates the account (matched by Google's own account id first, "
+        "then by email — so an existing password account signing in with "
+        "Google the first time gets linked rather than duplicated), and "
+        "redirects to the frontend with `?oauth_token=<bearer token>` — "
+        "or `?oauth_error=<reason>` if anything along the way failed. Not "
+        "behind `verify_api_key`, for the same reason /auth/google/login "
+        "isn't.",
+    )
+    async def google_callback(
+        code: str | None = None, state: str | None = None, error: str | None = None
+    ) -> RedirectResponse:
+        if error:
+            return RedirectResponse(f"{settings.frontend_base_url}/?oauth_error=denied")
+        if not code or not state:
+            return RedirectResponse(f"{settings.frontend_base_url}/?oauth_error=invalid_request")
+        try:
+            verify_oauth_state_token(state)
+        except HTTPException:
+            return RedirectResponse(f"{settings.frontend_base_url}/?oauth_error=invalid_state")
+
+        try:
+            access_token = google_oauth.exchange_code(code, _google_callback_url())
+            userinfo = google_oauth.fetch_userinfo(access_token)
+            google_id = userinfo["sub"]
+            email = userinfo["email"]
+        except Exception as exc:
+            logger.warning("google oauth exchange failed: %s", exc)
+            return RedirectResponse(f"{settings.frontend_base_url}/?oauth_error=exchange_failed")
+
+        user = user_store.get_by_google_id(google_id)
+        if user is None:
+            user = user_store.get_by_email(email)
+            if user is not None:
+                user_store.link_google_id(user.user_id, google_id)
+            else:
+                user_id = str(uuid.uuid4())
+                # A Google-only account still needs *some* password_hash
+                # (the column stays NOT NULL — see users.py's module
+                # docstring) — a random value nobody will ever type in
+                # simply never verifies true, which is exactly the
+                # behavior a "no password set" account should have.
+                user_store.create(
+                    user_id, email, hash_password(secrets.token_urlsafe(32)), google_id=google_id
+                )
+                user = user_store.get_by_id(user_id)
+
+        token = create_access_token(user.user_id)
+        return RedirectResponse(f"{settings.frontend_base_url}/?oauth_token={token}")
 
     @app.get(
         "/sessions",

@@ -1677,6 +1677,72 @@ on it, closer to a real printed travel brochure than a plain document
       and rating, a restaurant item picked up a real thumbnail, and the
       budget section correctly reads "€" throughout instead of "$"
 
+**Post-24-week-plan — "Continue with Google" (OAuth sign-in)**: reduces
+account-creation friction — one click instead of typing an email and an
+8-character password — without touching the existing email/password flow at
+all; both work side by side on the same account.
+- [x] `tools/google_oauth.py`'s `GoogleOAuthClient` wraps the two real
+      network calls (code -> access token, access token -> userinfo) behind
+      an injectable interface, same DI convention `EmailSender`/
+      `CurrencyConverter` already use — `create_app(google_oauth=...)` lets
+      tests swap in a fake with zero real network calls
+- [x] `GET /auth/google/login` redirects to Google's consent screen;
+      `GET /auth/google/callback` exchanges the code, looks the account up
+      by Google's own account id first, then by email (so an existing
+      password account signing in with Google for the first time gets
+      *linked*, not duplicated), and redirects to the frontend with
+      `?oauth_token=<bearer token>` — the exact same kind of token
+      `/auth/login` issues, so the rest of the app doesn't know or care
+      which path a session came from
+- [x] CSRF-protected statelessly: `state` is itself a short-lived (5 min),
+      signed JWT (`create_oauth_state_token`/`verify_oauth_state_token`,
+      same `purpose`-claim isolation trick `create_reset_token` already
+      uses) rather than a server-side session — there's nowhere to put one
+      yet, since the user isn't authenticated at this point in the flow
+- [x] A Google-only account still satisfies `users.password_hash TEXT NOT
+      NULL` — it gets a real bcrypt hash of a random, nobody-knows-it value
+      instead of a nullable column, so the existing schema/constraint never
+      changes at all
+- [x] Optional-credential graceful degradation, same pattern as every other
+      integration in this project: no `GOOGLE_CLIENT_ID`/`SECRET` set ->
+      `/auth/google/login` redirects straight back to the frontend with
+      `?oauth_error=not_configured` instead of erroring
+- [x] Frontend: a "Continue with Google" button on `AuthPage` (both login
+      and register modes — same backend endpoint handles both), and
+      `App.tsx` reads `?oauth_token=`/`?oauth_error=` off the URL on mount,
+      the same pattern already used for `?reset_token=` and `?shared=` —
+      `useAuth`'s new `loginWithToken` adopts a pre-issued token by reusing
+      the exact fetch-user-then-setUser logic the initial-mount effect
+      already had, rather than a third copy of it
+- [x] 40 new/updated backend tests (users.py's `google_id`/
+      `get_by_google_id`/`link_google_id`, the oauth-state token, the full
+      `GoogleOAuthClient` HTTP layer via `responses`, and 15 endpoint tests
+      covering new-account creation, existing-account linking, repeat
+      sign-in reusing the same account, and every failure path — denied,
+      missing code, forged state, a real reset/access token replayed as
+      state, and Google itself rejecting the exchange); 8 new frontend
+      tests. 859 backend tests passing (up from 819), 144 frontend tests
+      passing (up from 136)
+- [x] Live-verified as far as possible without a real registered Google
+      Cloud OAuth app (there's no way to script an actual Google account
+      through its real login/consent UI, nor should there be): ran a real
+      local backend + frontend and, through an actual browser, confirmed
+      the "Continue with Google" button is wired to the backend, clicking
+      it redirects all the way through this backend to Google's *real*
+      servers (which reject the intentionally-fake test client id with a
+      genuine `invalid_client` error — proof the whole redirect chain
+      reaches Google for real, not a stub), the `not_configured` and
+      `denied` error states render their friendly messages correctly, and
+      — using a real token minted by `/auth/register` in place of one
+      `/auth/google/callback` would have issued, since the frontend can't
+      tell the difference and shouldn't have to — that `?oauth_token=`
+      really does log the browser in, land on the dashboard, and strip the
+      token from the URL. Every `/auth/google/login` and
+      `/auth/google/callback` failure path (`not_configured`, `denied`,
+      `invalid_request`, `invalid_state`, and `exchange_failed` against
+      Google's real token endpoint with a fake code) was also hit directly
+      over real HTTP and confirmed to redirect correctly
+
 ## Setup
 
 ```bash

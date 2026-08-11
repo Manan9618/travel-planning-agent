@@ -15,6 +15,7 @@ to them.
 from __future__ import annotations
 
 import re
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -105,6 +106,39 @@ def decode_reset_token(token: str) -> str:
     if payload.get("purpose") != _RESET_TOKEN_PURPOSE:
         raise HTTPException(status_code=400, detail="invalid or expired reset link")
     return payload["sub"]
+
+
+_OAUTH_STATE_PURPOSE = "oauth_state"
+_OAUTH_STATE_EXPIRE_MINUTES = 5
+
+
+def create_oauth_state_token() -> str:
+    """The CSRF-protection `state` param for the Google sign-in redirect.
+    No server-side session exists yet at this point in the flow (the user
+    isn't authenticated), so rather than standing up a session store just
+    for this, `state` is itself a short-lived, signed JWT — Google echoes
+    it back verbatim on the callback, and a signature we can verify with
+    our own secret is unforgeable by anyone who doesn't have it, exactly
+    the same trick `create_reset_token` uses for a different purpose."""
+    now = datetime.now(UTC)
+    payload = {
+        "purpose": _OAUTH_STATE_PURPOSE,
+        "nonce": secrets.token_urlsafe(16),
+        "iat": now,
+        "exp": now + timedelta(minutes=_OAUTH_STATE_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def verify_oauth_state_token(token: str) -> None:
+    """Raises HTTPException(400) if `token` isn't a valid, unexpired state
+    token this backend itself issued moments earlier."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=400, detail="invalid or expired oauth state") from exc
+    if payload.get("purpose") != _OAUTH_STATE_PURPOSE:
+        raise HTTPException(status_code=400, detail="invalid or expired oauth state")
 
 
 def extract_bearer_token(authorization: str | None) -> str:

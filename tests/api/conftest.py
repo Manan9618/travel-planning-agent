@@ -253,7 +253,7 @@ def app_factory():
     fixture defaults (e.g. Week 21's incremental-refinement tests, which need
     to count how many times each search tool was actually called)."""
 
-    def _make(parser=None, narrator=None, email_sender=None, **tool_overrides):
+    def _make(parser=None, narrator=None, email_sender=None, google_oauth=None, **tool_overrides):
         graph = build_stub_graph(parser=parser, **tool_overrides)
         return create_app(
             graph=graph,
@@ -262,6 +262,7 @@ def app_factory():
             narrator=narrator or FakeNarrator(),
             parser=parser or StubParser(),
             email_sender=email_sender or FakeEmailSender(),
+            google_oauth=google_oauth,
         )
 
     return _make
