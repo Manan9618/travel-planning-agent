@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waypoint — an AI agent that plans real trips</title>
+<meta name="description" content="An autonomous AI travel-planning agent: real flights, hotels, attractions, and restaurants, a route-optimized day-by-day itinerary, and a polished PDF export — built over a 24-week engineering plan." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%2318160f%22/><text x=%2250%22 y=%2268%22 font-size=%2260%22 font-family=%22monospace%22 font-weight=%22700%22 fill=%22%23f1efe7%22 text-anchor=%22middle%22>W</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #f1efe7;
+    --surface: #faf9f5;
+    --ink: #18160f;
+    --ink-muted: #756f5e;
+    --ink-faint: #a49d89;
+    --line: #ddd7c6;
+    --accent: #1f6b3a;
+    --accent-soft: #e3ecdf;
+    --sans: 'Instrument Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+  }
+  a { color: inherit; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.site {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0; border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.03em; }
+  .brand .mark {
+    width: 28px; height: 28px; border-radius: 6px; background: var(--ink); color: var(--paper);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
+  }
+  nav.top a {
+    text-decoration: none; font-family: var(--mono); font-size: 12px; color: var(--ink-muted);
+    margin-left: 20px;
+  }
+  nav.top a:hover { color: var(--ink); }
+
+  .hero { padding: 72px 0 40px; text-align: center; }
+  .hero .kicker {
+    display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); padding: 5px 12px; border-radius: 999px; margin-bottom: 20px;
+  }
+  h1 { font-size: 44px; line-height: 1.15; margin: 0 0 16px; letter-spacing: -0.01em; }
+  .hero p.sub { font-size: 18px; color: var(--ink-muted); max-width: 640px; margin: 0 auto 32px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; text-decoration: none;
+    padding: 11px 20px; border-radius: 10px; display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.primary:hover { opacity: 0.88; }
+  .btn.ghost { border: 1px solid var(--line); color: var(--ink); }
+  .btn.ghost:hover { background: var(--surface); }
+
+  .hero-media { margin-top: 48px; }
+  .hero-media img {
+    max-width: 100%; border-radius: 14px; border: 1px solid var(--line);
+    box-shadow: 0 8px 30px rgba(24,22,15,0.10);
+  }
+  .hero-media .caption { margin-top: 10px; font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+
+  section { padding: 56px 0; }
+  section.alt { background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  h2 { font-size: 26px; margin: 0 0 8px; }
+  .section-sub { color: var(--ink-muted); margin: 0 0 32px; max-width: 620px; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 40px 0; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; text-align: center; }
+  .stat .v { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--accent); }
+  .stat .l { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+
+  .feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .feature {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px;
+  }
+  .feature .badge {
+    width: 28px; height: 28px; border-radius: 999px; background: var(--accent); color: white;
+    display: flex; align-items: center; justify-content: center; font-family: var(--mono);
+    font-size: 11px; font-weight: 700; margin-bottom: 12px;
+  }
+  .feature h3 { margin: 0 0 6px; font-size: 15px; }
+  .feature p { margin: 0; font-size: 13.5px; color: var(--ink-muted); }
+
+  .scene { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; margin-bottom: 56px; }
+  .scene:nth-child(even) .scene-media { order: 2; }
+  .scene img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
+  .scene h3 { font-size: 19px; margin: 0 0 10px; }
+  .scene p { color: var(--ink-muted); font-size: 14.5px; }
+  .scene .tag {
+    font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--accent); margin-bottom: 8px; display: block;
+  }
+
+  .stack-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--surface);
+  }
+
+  .links-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .link-card {
+    display: block; text-decoration: none; border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; background: var(--surface);
+  }
+  .link-card:hover { border-color: var(--accent); }
+  .link-card .t { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .link-card .d { font-size: 12.5px; color: var(--ink-muted); }
+
+  footer {
+    padding: 40px 0 60px; text-align: center; color: var(--ink-faint); font-family: var(--mono); font-size: 12px;
+  }
+
+  @media (max-width: 760px) {
+    h1 { font-size: 32px; }
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .feature-grid { grid-template-columns: 1fr; }
+    .scene, .scene:nth-child(even) .scene-media { grid-template-columns: 1fr; order: initial; }
+    .scene { grid-template-columns: 1fr; }
+    .links-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="site">
+    <div class="brand"><span class="mark">W</span> WAYPOINT</div>
+    <nav class="top">
+      <a href="#how-it-works">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#stack">Stack</a>
+      <a href="https://github.com/Manan9618/travel-planning-agent">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<div class="hero">
+  <div class="wrap">
+    <span class="kicker">Open source · built over a 24-week engineering plan</span>
+    <h1>Describe a trip.<br />Waypoint plans it — for real.</h1>
+    <p class="sub">
+      An autonomous AI agent that searches real flights, hotels, attractions, and
+      restaurants in parallel, builds a route-optimized day-by-day itinerary that's
+      weather-aware and budget-constrained, and hands you an interactive map and a
+      polished PDF — not fifteen browser tabs and a spreadsheet.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/Manan9618/travel-planning-agent">View on GitHub →</a>
+      <a class="btn ghost" href="https://github.com/Manan9618/travel-planning-agent#setup">Run it yourself</a>
+    </div>
+    <div class="hero-media">
+      <img src="assets/demo.gif" alt="Real live session: typing a request, watching parallel search steps complete, then reviewing the itinerary, map, and PDF" loading="lazy" />
+      <p class="caption">Real, unscripted capture against the actual running app — not a mockup.</p>
+    </div>
+  </div>
+</div>
+
+<section class="alt">
+  <div class="wrap">
+    <div class="stat-row">
+      <div class="stat"><div class="v">2.92×</div><div class="l">parallel search speedup</div></div>
+      <div class="stat"><div class="v">+45%</div><div class="l">route efficiency vs. naive</div></div>
+      <div class="stat"><div class="v">1,003</div><div class="l">backend + frontend tests</div></div>
+      <div class="stat"><div class="v">12</div><div class="l">independent agent tools</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="section-sub">Three real, unscripted scenarios — same live app, same real APIs, no staged data.</p>
+
+    <div class="scene">
+      <div class="scene-text">
+        <span class="tag">Scene 1</span>
+        <h3>Search in parallel, route with real optimization</h3>
+        <p>
+          Five independent search steps — flights, hotels, attractions, restaurants,
+          weather — run at once through a LangGraph supervisor, not one after another.
+          A DBSCAN-clustering + budget-constrained backtracking pass then builds the
+          actual day-by-day schedule, refinable in plain English afterward.
+        </p>
+      </div>
+      <div class="scene-media"><img src="assets/demo.gif" alt="Core planning flow" loading="lazy" /></div>
+    </div>
+
+    <div class="scene">
+      <div class="scene-text">
+        <span class="tag">Scene 2</span>
+        <h3>Multi-destination trips, real currency conversion</h3>
+        <p>
+          "5 days split between Paris and Rome under 3,000 EUR" runs the same
+          day-building pipeline once per city — no bleed between them — and every
+          budget figure is shown in the currency you actually stated it in, converted
+          through a live exchange-rate lookup.
+        </p>
+      </div>
+      <div class="scene-media"><img src="assets/demo-multidestination.gif" alt="Multi-destination trip with EUR budget" loading="lazy" /></div>
+    </div>
+
+    <div class="scene">
+      <div class="scene-text">
+        <span class="tag">Scene 3</span>
+        <h3>Real accounts, links that work with no login</h3>
+        <p>
+          Email/password or one-click Google sign-in, trips saved to a dashboard, and
+          a share link that genuinely works logged all the way out — full itinerary,
+          real map, PDF download, no account required on the other end.
+        </p>
+      </div>
+      <div class="scene-media"><img src="assets/demo-sharing.gif" alt="Sharing a trip and viewing it logged out" loading="lazy" /></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="alt">
+  <div class="wrap">
+    <h2>What's actually in it</h2>
+    <p class="section-sub">Not a features list of intentions — everything below is built, tested, and live-verified.</p>
+    <div class="feature-grid">
+      <div class="feature"><div class="badge">5×</div><h3>Parallel, fault-tolerant search</h3><p>Every external API call catches its own failure and degrades to a clearly-marked mock rather than crashing the run.</p></div>
+      <div class="feature"><div class="badge">$</div><h3>Budget-aware, currency-aware</h3><p>Every itinerary is checked against your stated budget, tier by tier — in whatever currency you stated it in.</p></div>
+      <div class="feature"><div class="badge">↻</div><h3>Refine in plain English</h3><p>"Add a museum," "make it cheaper" — only the search steps whose actual inputs changed re-run.</p></div>
+      <div class="feature"><div class="badge">🌍</div><h3>Multi-destination trips</h3><p>Split a trip across cities and each gets its own correctly-blocked days, no cross-city bleed.</p></div>
+      <div class="feature"><div class="badge">🔗</div><h3>Public share links</h3><p>One click, no account needed on the receiving end — read-only, real map and PDF included.</p></div>
+      <div class="feature"><div class="badge">PDF</div><h3>A PDF worth printing</h3><p>Real cover photo, per-attraction photos, a budget table, and a QR code to the live map.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <h2>Under the hood</h2>
+    <p class="section-sub">FastAPI + LangGraph backend, React + TypeScript frontend, real observability, Docker Compose for the whole stack.</p>
+    <div class="stack-row">
+      <span class="chip">LangGraph</span>
+      <span class="chip">FastAPI</span>
+      <span class="chip">React 19</span>
+      <span class="chip">TypeScript</span>
+      <span class="chip">PostgreSQL</span>
+      <span class="chip">Redis</span>
+      <span class="chip">WeasyPrint</span>
+      <span class="chip">Folium / Leaflet</span>
+      <span class="chip">Prometheus</span>
+      <span class="chip">Grafana</span>
+      <span class="chip">Docker Compose</span>
+      <span class="chip">GPT-4o</span>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <h2>Read more</h2>
+    <div class="links-grid">
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent#readme">
+        <div class="t">README</div><div class="d">Full architecture, the week-by-week build log, and setup instructions.</div>
+      </a>
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent/blob/main/docs/BLOG_POST.md">
+        <div class="t">Build write-up</div><div class="d">The architecture reasoning, the bugs that took longest to find, and why.</div>
+      </a>
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent/blob/main/docs/EVALUATION_REPORT.md">
+        <div class="t">Evaluation report</div><div class="d">Real before/after data, a 10-dimension rubric, and a simulated user study.</div>
+      </a>
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent/blob/main/docs/PROJECT_PLAN.md">
+        <div class="t">The 24-week plan</div><div class="d">The original plan this project was built against, week by week.</div>
+      </a>
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent/tree/main/docs/adr">
+        <div class="t">Architecture Decision Records</div><div class="d">Why LangGraph over a plain script, SQLite-default over requiring Postgres, and more.</div>
+      </a>
+      <a class="link-card" href="https://github.com/Manan9618/travel-planning-agent/blob/main/docs/RESUME_BULLETS.md">
+        <div class="t">Resume bullets</div><div class="d">This project's own real, verified numbers — not the plan's aspirational template.</div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Built solo, in the open. <a href="https://github.com/Manan9618/travel-planning-agent">github.com/Manan9618/travel-planning-agent</a>
+</footer>
+
+</body>
+</html>
