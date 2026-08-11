@@ -267,12 +267,26 @@ def test_attraction_row_has_no_thumbnail_without_a_photo():
     assert '<img class="item-thumb"' not in html
 
 
-def test_non_attraction_rows_never_get_a_thumbnail(monkeypatch):
+def test_restaurant_row_shows_photo_thumbnail_when_available(monkeypatch):
     photo = CoverPhoto(url="https://x", photographer_name="Jane", photographer_url="https://x")
     day = DayPlan(
         day_number=1,
         date=date(2026, 9, 1),
         items=[_item("Bistro", activity_type="restaurant", cost=30)],
+    )
+    itinerary = _itinerary(days=[day])
+    generator = _generator(photo=photo)
+    monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
+    html = generator.render_html(itinerary)
+    assert 'class="item-thumb" src="data:image/jpeg;base64,ZmFrZWJ5dGVz"' in html
+
+
+def test_non_attraction_non_restaurant_rows_never_get_a_thumbnail(monkeypatch):
+    photo = CoverPhoto(url="https://x", photographer_name="Jane", photographer_url="https://x")
+    day = DayPlan(
+        day_number=1,
+        date=date(2026, 9, 1),
+        items=[_item("Airport transfer", activity_type="transfer", cost=30)],
     )
     itinerary = _itinerary(days=[day])
     generator = _generator(photo=photo)
@@ -311,7 +325,7 @@ def test_attraction_row_reuses_existing_photo_url_without_a_lookup(monkeypatch):
         date=date(2026, 9, 1),
         items=[_item("Eiffel Tower", photo_url="https://images.unsplash.com/preset-eiffel")],
     )
-    itinerary = _itinerary(days=[day])
+    itinerary = _itinerary(days=[day], hotel=False)
     generator = PDFGenerator(photo_tool=RaisingPhotoTool())
     monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
     html = generator.render_html(itinerary)
@@ -388,6 +402,114 @@ def test_qr_code_included_only_when_map_url_given(tmp_path):
     assert "Scan for the interactive map" in with_url
 
 
+# --- hotel section -----------------------------------------------------------
+
+
+def test_hotel_section_shows_name_address_and_price():
+    itinerary = _itinerary(hotel=True)
+    html = _generator().render_html(itinerary)
+    assert "Where You" in html and "Stay" in html
+    assert "Test Hotel" in html
+    assert "Paris, France" in html
+    assert "$100" in html
+
+
+def test_hotel_section_absent_without_a_hotel():
+    itinerary = _itinerary(hotel=False)
+    html = _generator().render_html(itinerary)
+    assert 'class="hotel card"' not in html
+
+
+def test_hotel_section_shows_photo_when_available(monkeypatch):
+    photo = CoverPhoto(url="https://x", photographer_name="Jane", photographer_url="https://x")
+    itinerary = _itinerary(hotel=True)
+    generator = _generator(photo=photo)
+    monkeypatch.setattr(generator, "_download_as_base64", staticmethod(lambda url: "ZmFrZWJ5dGVz"))
+    html = generator.render_html(itinerary)
+    assert 'class="hotel-photo" src="data:image/jpeg;base64,ZmFrZWJ5dGVz"' in html
+
+
+def test_hotel_section_has_no_photo_without_one():
+    itinerary = _itinerary(hotel=True)
+    html = _generator(photo=None).render_html(itinerary)
+    assert '<img class="hotel-photo"' not in html
+
+
+def test_hotel_section_shows_rating_when_present():
+    from travel_agent.models.core import HotelOption
+
+    hotel = HotelOption(
+        name="Grand Hotel",
+        address="1 Rue de Paris",
+        lat=48.85,
+        lng=2.35,
+        price_per_night=150,
+        rating=8.7,
+    )
+    itinerary = _itinerary(hotel=False)
+    itinerary = itinerary.model_copy(update={"hotel": hotel})
+    html = _generator().render_html(itinerary)
+    assert "8.7/10" in html
+
+
+def test_hotel_section_shows_amenities_when_present():
+    from travel_agent.models.core import HotelOption
+
+    hotel = HotelOption(
+        name="Grand Hotel",
+        address="1 Rue de Paris",
+        lat=48.85,
+        lng=2.35,
+        price_per_night=150,
+        amenities=["Free WiFi", "Pool"],
+    )
+    itinerary = _itinerary(hotel=False).model_copy(update={"hotel": hotel})
+    html = _generator().render_html(itinerary)
+    assert "Free WiFi" in html
+    assert "Pool" in html
+
+
+def test_hotel_price_uses_the_hotels_own_currency_not_budget_currency():
+    from travel_agent.models.core import HotelOption
+
+    hotel = HotelOption(
+        name="Grand Hotel",
+        address="1 Rue de Paris",
+        lat=48.85,
+        lng=2.35,
+        price_per_night=150,
+        currency="GBP",
+    )
+    itinerary = _itinerary(hotel=False, budget_currency="EUR").model_copy(update={"hotel": hotel})
+    html = _generator().render_html(itinerary)
+    assert "£150" in html
+
+
+# --- visual redesign: card layout -----------------------------------------------
+
+
+def test_page_background_is_cream_not_plain_white():
+    html = _generator().render_html(_itinerary())
+    assert "#f6f1e9" in html
+
+
+def test_content_sections_use_the_card_style():
+    html = _generator().render_html(_itinerary())
+    assert 'class="summary card"' in html
+    assert 'class="quick-overview card"' in html
+    assert 'class="day card"' in html
+
+
+def test_day_card_is_tinted_with_its_own_day_color():
+    from travel_agent.tools.travel_map_generator import day_color
+
+    day = DayPlan(day_number=2, date=date(2026, 9, 2), items=[])
+    itinerary = _itinerary(days=[DayPlan(day_number=1, date=date(2026, 9, 1), items=[]), day])
+    html = _generator().render_html(itinerary)
+    r, g, b = (int(day_color(2).lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+    assert f"rgba({r}, {g}, {b}, 0.06)" in html
+
+
 # --- budget section -------------------------------------------------------------
 
 
@@ -418,6 +540,33 @@ def test_budget_section_shows_category_table_with_evaluation():
     assert "Over" in html
     assert "80%" in html
     assert "$50 over" in html
+
+
+def test_budget_section_shows_stated_currency_not_a_hardcoded_dollar_sign():
+    evaluation = BudgetEvaluation(
+        allocation=BudgetAllocation(flights=0, hotel=200, food=100, activities=100),
+        categories=[
+            CategoryEvaluation(
+                category="hotel", allocated=200, actual=200, difference=0, status="on_target"
+            ),
+        ],
+        total_allocated=400,
+        total_actual=350,
+        adherence_score=0.8,
+    )
+    itinerary = _itinerary(budget_currency="EUR")
+    html = _generator().render_html(itinerary, budget_evaluation=evaluation)
+    assert "€200" in html
+    assert "€350" in html
+    assert "€400" in html
+    assert "$200" not in html
+
+
+def test_stated_budget_in_executive_summary_uses_its_own_currency():
+    itinerary = _itinerary(budget_total=2000, budget_currency="EUR")
+    html = _generator().render_html(itinerary)
+    assert "€2,000" in html
+    assert "$2,000 EUR" not in html
 
 
 # --- end-to-end pypdf content verification -----------------------------------

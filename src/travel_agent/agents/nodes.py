@@ -315,6 +315,12 @@ def make_enrich_attractions_node(
                 for item in day.items
                 if item.activity_type == "attraction"
             ]
+            restaurant_items = [
+                item
+                for day in itinerary.days
+                for item in day.items
+                if item.activity_type == "restaurant"
+            ]
             descriptions = description_tool.describe(
                 [item.title for item in attraction_items], destination
             )
@@ -324,6 +330,13 @@ def make_enrich_attractions_node(
                     item.photo_url = photo.url
                 if item.title in descriptions:
                     item.description = descriptions[item.title]
+            # Restaurants get a photo too (MakeMyTrip-style listing in the PDF)
+            # but no history/why-visit blurb — that's an attraction-specific
+            # thing the describer tool isn't built for.
+            for item in restaurant_items:
+                photo = photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
+                if photo:
+                    item.photo_url = photo.url
 
             return {
                 "itinerary": itinerary.model_dump(mode="json"),

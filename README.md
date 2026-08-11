@@ -1630,6 +1630,53 @@ conversion, calendar export, multi-destination trips).
 - [x] 805 backend tests passing (11 skip without local Postgres, up from
       703), 136 frontend tests passing (up from 97)
 
+**Post-24-week-plan — a more attractive PDF** (more photos, colored
+background instead of flat white): the earlier "colorful badges on a plain
+white page" redesign still put every section on a flat white background —
+this pass moves the whole page onto a warm cream tone and turns every
+section into a distinct white "card" (rounded corners, soft shadow) sitting
+on it, closer to a real printed travel brochure than a plain document
+- [x] Each day's card additionally gets a faint tint of its own `day_color`
+      (`_hex_to_rgba`, ~6% alpha) so a day's color identity carries through
+      its whole card, not just the badge and left border
+- [x] Restaurants get the same Unsplash thumbnail treatment attractions
+      already had — `make_enrich_attractions_node` now fetches a photo for
+      restaurant items too (still no history/why-visit blurb; that stays
+      attraction-only, the describer tool isn't built for restaurants)
+- [x] New "Where You'll Stay" section: the booked hotel now gets its own
+      card with a real photo (Unsplash lookup on the hotel's name +
+      destination), star rating, price per night, and amenities — previously
+      a hotel was just one bullet in the Inclusions list, with no visual
+      presence of its own
+- [x] Found and fixed a real bug while touching this file: the budget and
+      trip-overview sections hardcoded a `$` regardless of `budget_currency`
+      — a EUR trip's already-converted figures (from the currency-conversion
+      feature) were rendering as "$1,850" instead of "€1,850", and the
+      stated-budget line doubled up as "$2,000 EUR". New `_format_money`
+      helper picks the right symbol (USD/EUR/GBP/JPY, falling back to
+      `"<amount> <code>"` for anything else) and is used everywhere a PDF
+      total is shown, except per-item costs and the raw `estimate_
+      itinerary_cost` estimate, which stay `$` on purpose — both are
+      unconverted USD figures by design, same as the frontend's equivalent
+      fallback estimate
+- [x] The hotel's own price line deliberately uses `hotel.currency` (what
+      its search provider actually quoted), not `budget_currency` — using
+      the traveler's stated currency there would relabel an unconverted
+      amount with the wrong symbol
+- [x] 14 new/updated backend tests (hotel section presence/photo/rating/
+      amenities/currency, card CSS classes, day-color tinting, restaurant
+      thumbnails, the two currency-formatting fixes); 819 backend tests
+      passing, all lint clean
+- [x] Visually verified twice: once by generating a PDF directly against a
+      hand-built itinerary and rendering every page to PNG (`pdftoppm`) for
+      inspection, and once fully live — register → plan a real "3 days in
+      Barcelona under 2000 EUR" trip through the actual Docker stack (real
+      parser, real search APIs) → Export PDF → same page-by-page visual
+      check. Confirmed: cream background and cards render correctly, day
+      cards carry their own color tint, the hotel card shows a real photo
+      and rating, a restaurant item picked up a real thumbnail, and the
+      budget section correctly reads "€" throughout instead of "$"
+
 ## Setup
 
 ```bash

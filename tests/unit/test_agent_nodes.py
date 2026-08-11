@@ -570,7 +570,7 @@ def test_enrich_attractions_node_queries_title_and_destination():
     description_tool.describe.assert_called_once_with(["Louvre Museum"], "Paris")
 
 
-def test_enrich_attractions_node_skips_non_attraction_items():
+def test_enrich_attractions_node_gives_restaurants_a_photo_but_no_description():
     restaurant_item = ItineraryItem(
         time_slot="evening",
         start_time="2026-09-01T19:00:00",
@@ -579,11 +579,38 @@ def test_enrich_attractions_node_skips_non_attraction_items():
         title="Le Comptoir",
     )
     photo_tool = MagicMock()
+    photo_tool.get_photo.return_value = CoverPhoto(
+        url="https://images.unsplash.com/le-comptoir",
+        photographer_name="Jane",
+        photographer_url="https://x",
+    )
     description_tool = MagicMock()
     description_tool.describe.return_value = {}
 
     node = make_enrich_attractions_node(photo_tool, description_tool)
     result = node({"itinerary": _itinerary_dict_with_items([restaurant_item])})
+
+    photo_tool.get_photo.assert_called_once_with("Le Comptoir Paris", thumbnail=True)
+    description_tool.describe.assert_called_once_with([], "Paris")
+    item = result["itinerary"]["days"][0]["items"][0]
+    assert item["photo_url"] == "https://images.unsplash.com/le-comptoir"
+    assert item["description"] is None
+
+
+def test_enrich_attractions_node_skips_non_attraction_non_restaurant_items():
+    transfer_item = ItineraryItem(
+        time_slot="morning",
+        start_time="2026-09-01T08:00:00",
+        end_time="2026-09-01T09:00:00",
+        activity_type="transfer",
+        title="Airport transfer",
+    )
+    photo_tool = MagicMock()
+    description_tool = MagicMock()
+    description_tool.describe.return_value = {}
+
+    node = make_enrich_attractions_node(photo_tool, description_tool)
+    result = node({"itinerary": _itinerary_dict_with_items([transfer_item])})
 
     photo_tool.get_photo.assert_not_called()
     description_tool.describe.assert_called_once_with([], "Paris")

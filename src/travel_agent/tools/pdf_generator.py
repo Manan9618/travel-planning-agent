@@ -12,11 +12,10 @@ hosted map until Week 15's FastAPI backend exists), a styled budget
 breakdown table (Week 8's `BudgetEvaluation` if available, else just the
 estimated total), and (post-Week-16) a small Unsplash thumbnail next to each
 attraction row, MakeMyTrip-style — e.g. a real Eiffel Tower photo next to an
-"Eiffel Tower" item, not just the one destination-level cover photo. Scoped
-to `activity_type == "attraction"` only (not restaurants/hotels/transfers)
-to keep the extra Unsplash calls bounded; same graceful no-key/no-result
-fallback as the cover photo, so a row simply renders without a thumbnail
-rather than blocking or breaking the PDF. Also renders a 2-3 sentence
+"Eiffel Tower" item, not just the one destination-level cover photo (extended
+to restaurant rows too in the second visual pass below). Same graceful
+no-key/no-result fallback as the cover photo, so a row simply renders without
+a thumbnail rather than blocking or breaking the PDF. Also renders a 2-3 sentence
 history/why-visit blurb (`item.description`) under the title when present —
 both `photo_url` and `description` are normally filled in by the
 `enrich_attractions` graph step before the PDF is generated, so this class
@@ -35,6 +34,22 @@ package. Icon-style bullets are plain CSS-drawn dots rather than emoji glyphs
 — the Docker image only ships `fonts-liberation`, which doesn't reliably
 include symbol code points, so dots avoid a tofu-box risk that real pictogram
 characters would carry.
+
+Second visual pass (post-24-week-plan): the page moved off a flat white
+background onto a warm cream tone, with every content section now a distinct
+white "card" (rounded corners, soft shadow) sitting on that cream page —
+each day's card additionally gets a faint tint of its own `day_color`, so a
+day's identity carries through its whole card, not just the badge/border.
+More photos too: restaurants now get the same Unsplash thumbnail treatment
+attractions already had (still no history blurb — that's attraction-only),
+and a new "Where You'll Stay" section shows the booked hotel with its own
+photo, rating, price, and amenities, none of which had a dedicated visual
+home before (a hotel was previously just one bullet in the inclusions list).
+Also fixed while touching this file: the budget and trip-overview sections
+were hardcoding a `$` regardless of `budget_currency` — a EUR trip's
+already-converted figures (from the currency-conversion feature) were being
+shown as "$1,850" instead of "€1,850". `_format_money` now picks the right
+symbol (falling back to `"<amount> <code>"` for currencies without one).
 """
 
 from __future__ import annotations
@@ -69,8 +84,11 @@ PHOTO_DOWNLOAD_TIMEOUT = 10
 _BADGE_COLORS = ["#2c5f8a", "#e08a3c", "#1f8a8a", "#7a5cc9", "#2f9e5b", "#c9765c"]
 
 _CSS = """
-@page { size: A4; margin: 2cm; }
-body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #222; font-size: 11pt; }
+@page { size: A4; margin: 2cm; background: #f6f1e9; }
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif; color: #222; font-size: 11pt;
+  background: #f6f1e9;
+}
 h1 { font-size: 32pt; margin: 0; }
 h2 { font-size: 16pt; margin: 0 0 0.5em 0; border-left: 6px solid #2c5f8a; padding-left: 0.4em; }
 table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
@@ -87,14 +105,18 @@ td, th { padding: 4px 8px; border-bottom: 1px solid #ddd; text-align: left; }
 .cover .subtitle, .cover .trip-style { font-size: 14pt; margin: 0.2em 0 0 0; }
 .attribution { font-size: 8pt; color: #888; text-align: right; margin-top: -0.8em; }
 .attribution a { color: #888; }
-section { page-break-inside: avoid; margin-bottom: 1.5em; }
+section { page-break-inside: avoid; margin-bottom: 1.2em; }
+.card {
+  background: white; border-radius: 12px; padding: 0.9em 1.3em;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
 .day-badge {
   display: inline-block; width: 1.6em; height: 1.6em; border-radius: 50%;
   color: white; text-align: center; line-height: 1.6em; margin-right: 0.4em; font-size: 10pt;
 }
 .empty { color: #888; font-style: italic; }
 .warnings { color: #a05a00; }
-.map-thumbnail { width: 100%; border: 1px solid #ddd; }
+.map-thumbnail { width: 100%; border: 1px solid #ddd; border-radius: 6px; }
 .qr { text-align: center; margin-top: 0.5em; }
 .qr img { width: 3cm; height: 3cm; }
 .status-over { color: #b02a2a; font-weight: bold; }
@@ -102,7 +124,7 @@ section { page-break-inside: avoid; margin-bottom: 1.5em; }
 .status-on_target { color: #226; }
 .item-row {
   display: flex; align-items: center; gap: 0.6em; padding: 6px 0;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
 }
 .item-row:last-child { border-bottom: none; }
 .item-thumb {
@@ -124,6 +146,7 @@ section { page-break-inside: avoid; margin-bottom: 1.5em; }
 }
 .inclusion-exclusion h2 { border-left-color: #2f9e5b; }
 .packing h2 { border-left-color: #1f8a8a; }
+.hotel h2 { border-left-color: #7a5cc9; }
 h3 { font-size: 11pt; margin: 0.6em 0 0.3em 0; }
 .two-col { display: flex; gap: 1.5em; }
 .two-col > div { flex: 1; }
@@ -138,13 +161,25 @@ h3 { font-size: 11pt; margin: 0.6em 0 0.3em 0; }
 .dot-included { background: #2f9e5b; }
 .dot-excluded { background: #c94f4f; }
 .dot-packing { background: #1f8a8a; }
+.hotel-body { display: flex; gap: 1em; align-items: flex-start; }
+.hotel-photo {
+  width: 6cm; height: 4.2cm; object-fit: cover; border-radius: 8px; flex-shrink: 0;
+}
+.hotel-details { flex: 1; }
+.hotel-name-row { display: flex; align-items: baseline; gap: 0.6em; }
+.hotel-name { font-size: 13pt; font-weight: bold; }
+.hotel-rating { color: #c9765c; font-weight: bold; font-size: 10pt; }
+.hotel-address { color: #666; font-size: 9pt; margin: 0.1em 0 0.4em 0; }
+.hotel-price { font-weight: bold; margin: 0 0 0.3em 0; }
 .footer-band {
-  margin-top: 2em; padding: 1em 1.5em; border-radius: 8px; text-align: center; color: white;
+  margin-top: 0.4em; padding: 1em 1.5em; border-radius: 8px; text-align: center; color: white;
   background: linear-gradient(135deg, #2c5f8a, #1f8a8a);
 }
 .footer-band .tagline { font-size: 13pt; font-weight: bold; margin: 0 0 0.2em 0; }
 .footer-band .subtext { font-size: 9pt; opacity: 0.85; margin: 0; }
 """
+
+_CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥"}
 
 
 class PDFGenerator:
@@ -176,6 +211,7 @@ class PDFGenerator:
             self._cover_page(itinerary),
             self._quick_overview_section(itinerary),
             self._executive_summary(itinerary),
+            self._hotel_section(itinerary),
             self._inclusion_exclusion_section(itinerary),
             self._map_section(map_thumbnail_path, map_url),
             *[self._day_section(day, itinerary.preferences.destination) for day in itinerary.days],
@@ -243,6 +279,73 @@ class PDFGenerator:
             return None
 
     @staticmethod
+    def _format_money(amount: float, currency: str) -> str:
+        symbol = _CURRENCY_SYMBOLS.get(currency)
+        if symbol:
+            return f"{symbol}{amount:,.0f}"
+        return f"{amount:,.0f} {currency}"
+
+    @staticmethod
+    def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+        hex_color = hex_color.lstrip("#")
+        r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+        return f"rgba({r}, {g}, {b}, {alpha})"
+
+    def _hotel_section(self, itinerary: Itinerary) -> str:
+        hotel = itinerary.hotel
+        if not hotel:
+            return ""
+        photo = self._photo_tool.get_photo(
+            f"{hotel.name} {itinerary.preferences.destination}", thumbnail=False
+        )
+        photo_html = ""
+        if photo:
+            image_b64 = self._download_as_base64(photo.url)
+            if image_b64:
+                photo_html = f'<img class="hotel-photo" src="data:image/jpeg;base64,{image_b64}"/>'
+
+        rating_html = (
+            f'<span class="hotel-rating">&#9733; {hotel.rating:.1f}/10</span>'
+            if hotel.rating is not None
+            else ""
+        )
+        amenities_html = ""
+        if hotel.amenities:
+            amenities_html = (
+                '<ul class="dot-list two-col-list">'
+                + "".join(
+                    f'<li><span class="dot dot-packing"></span>{a}</li>' for a in hotel.amenities
+                )
+                + "</ul>"
+            )
+        # The hotel's own price is in whatever currency its search provider
+        # quoted (`hotel.currency`), not necessarily the traveler's stated
+        # budget_currency — using the wrong one here would silently relabel
+        # an unconverted amount, so this stays independent of the budget
+        # section's currency.
+        price_html = (
+            f'<p class="hotel-price">'
+            f"{self._format_money(hotel.price_per_night, hotel.currency)} / night</p>"
+        )
+        return f"""
+        <section class="hotel card">
+          <h2>Where You&rsquo;ll Stay</h2>
+          <div class="hotel-body">
+            {photo_html}
+            <div class="hotel-details">
+              <div class="hotel-name-row">
+                <span class="hotel-name">{hotel.name}</span>
+                {rating_html}
+              </div>
+              <p class="hotel-address">{hotel.address}</p>
+              {price_html}
+              {amenities_html}
+            </div>
+          </div>
+        </section>
+        """
+
+    @staticmethod
     def _executive_summary(itinerary: Itinerary) -> str:
         prefs = itinerary.preferences
         num_days = len(itinerary.days)
@@ -259,17 +362,21 @@ class PDFGenerator:
             ("Travelers", str(prefs.travelers)),
             ("Attractions", str(num_attractions)),
             ("Restaurants", str(num_restaurants)),
-            ("Estimated total cost", f"${total_cost:,.0f}"),
+            ("Estimated total cost", PDFGenerator._format_money(total_cost, "USD")),
         ]
         if prefs.budget_total:
-            rows.append(("Stated budget", f"${prefs.budget_total:,.0f} {prefs.budget_currency}"))
+            stated_budget = PDFGenerator._format_money(prefs.budget_total, prefs.budget_currency)
+            rows.append(("Stated budget", stated_budget))
         if prefs.must_see:
             rows.append(("Must-see", ", ".join(prefs.must_see)))
         if prefs.interests:
             rows.append(("Interests", ", ".join(prefs.interests)))
 
         row_html = "".join(f"<tr><td>{label}</td><td>{value}</td></tr>" for label, value in rows)
-        return f'<section class="summary"><h2>Trip Overview</h2><table>{row_html}</table></section>'
+        return (
+            '<section class="summary card"><h2>Trip Overview</h2>'
+            f"<table>{row_html}</table></section>"
+        )
 
     @staticmethod
     def _quick_overview_section(itinerary: Itinerary) -> str:
@@ -286,7 +393,7 @@ class PDFGenerator:
             stats.append(("Style", prefs.trip_style.value.replace("_", " ").title()))
         if prefs.budget_tier:
             stats.append(("Budget tier", prefs.budget_tier.value.replace("_", " ").title()))
-        stats.append(("Est. cost", f"${total_cost:,.0f}"))
+        stats.append(("Est. cost", PDFGenerator._format_money(total_cost, "USD")))
 
         badges_html = "".join(
             f'<div class="badge" style="background:{_BADGE_COLORS[i % len(_BADGE_COLORS)]}">'
@@ -295,7 +402,8 @@ class PDFGenerator:
             for i, (label, value) in enumerate(stats)
         )
         return (
-            f'<section class="quick-overview"><div class="badge-row">{badges_html}</div></section>'
+            '<section class="quick-overview card">'
+            f'<div class="badge-row">{badges_html}</div></section>'
         )
 
     @staticmethod
@@ -335,7 +443,7 @@ class PDFGenerator:
         included_html = _dot_list(included, "dot-included")
         excluded_html = _dot_list(excluded, "dot-excluded")
         return f"""
-        <section class="inclusion-exclusion">
+        <section class="inclusion-exclusion card">
           <h2>Inclusions &amp; Exclusions</h2>
           <div class="two-col">
             <div><h3>Included</h3><ul class="dot-list">{included_html}</ul></div>
@@ -372,7 +480,7 @@ class PDFGenerator:
 
         items_html = "".join(f'<li><span class="dot dot-packing"></span>{i}</li>' for i in items)
         return (
-            '<section class="packing"><h2>Packing Essentials</h2>'
+            '<section class="packing card"><h2>Packing Essentials</h2>'
             f'<ul class="dot-list two-col-list">{items_html}</ul></section>'
         )
 
@@ -402,7 +510,7 @@ class PDFGenerator:
                 f"<p>Scan for the interactive map</p></div>"
             )
         return (
-            f'<section class="map"><h2>Route Map</h2>'
+            f'<section class="map card"><h2>Route Map</h2>'
             f'<img class="map-thumbnail" src="data:image/png;base64,{image_b64}"/>'
             f"{qr_html}</section>"
         )
@@ -425,8 +533,9 @@ class PDFGenerator:
             warnings_html = (
                 "<ul class='warnings'>" + "".join(f"<li>{w}</li>" for w in day.warnings) + "</ul>"
             )
+        tint = self._hex_to_rgba(color, 0.06)
         return f"""
-        <section class="day">
+        <section class="day card" style="background: {tint}">
           <h2 style="border-left-color: {color}">
             <span class="day-badge" style="background: {color}">{day.day_number}</span>
             Day {day.day_number} &middot; {day.date.strftime('%A, %b %d')}
@@ -440,10 +549,11 @@ class PDFGenerator:
         cost = f"${item.cost:,.0f}" if item.cost else ""
         thumb_html = ""
         description_html = ""
-        if item.activity_type == "attraction":
-            # `photo_url` is set by the `enrich_attractions` graph step when this
-            # itinerary came from a real planning run; standalone PDFGenerator
-            # usage (e.g. tests) falls back to a direct lookup here.
+        if item.activity_type in ("attraction", "restaurant"):
+            # `photo_url` is set by the `enrich_attractions` graph step (now
+            # covering restaurants too) when this itinerary came from a real
+            # planning run; standalone PDFGenerator usage (e.g. tests) falls
+            # back to a direct lookup here.
             photo_url = item.photo_url
             if not photo_url:
                 photo = self._photo_tool.get_photo(f"{item.title} {destination}", thumbnail=True)
@@ -454,7 +564,8 @@ class PDFGenerator:
                     thumb_html = (
                         f'<img class="item-thumb" src="data:image/jpeg;base64,{image_b64}"/>'
                     )
-            if item.description:
+            # The why-visit blurb is attraction-only — restaurants never get one.
+            if item.activity_type == "attraction" and item.description:
                 description_html = f'<div class="item-description">{item.description}</div>'
         time_str = item.start_time.time().strftime("%H:%M")
         return f"""
@@ -474,13 +585,19 @@ class PDFGenerator:
         if budget_evaluation is None:
             total = estimate_itinerary_cost(itinerary)
             return (
-                '<section class="budget"><h2>Budget</h2>'
-                f"<p>Estimated total cost: <b>${total:,.0f}</b></p></section>"
+                '<section class="budget card"><h2>Budget</h2>'
+                f"<p>Estimated total cost: <b>{PDFGenerator._format_money(total, 'USD')}</b></p>"
+                "</section>"
             )
 
+        # BudgetOptimizer.evaluate() already converted every figure on
+        # `budget_evaluation` to the traveler's stated budget_currency — the
+        # only unconverted fallback above (no evaluation at all) is USD.
+        currency = itinerary.preferences.budget_currency
         rows = "".join(
-            f"<tr><td>{cat.category.title()}</td><td>${cat.allocated:,.0f}</td>"
-            f"<td>${cat.actual:,.0f}</td>"
+            f"<tr><td>{cat.category.title()}</td>"
+            f"<td>{PDFGenerator._format_money(cat.allocated, currency)}</td>"
+            f"<td>{PDFGenerator._format_money(cat.actual, currency)}</td>"
             f"<td class='status-{cat.status}'>{cat.status.replace('_', ' ').title()}</td></tr>"
             for cat in budget_evaluation.categories
         )
@@ -495,14 +612,14 @@ class PDFGenerator:
                 "<ul>" + "".join(f"<li>{s}</li>" for s in budget_evaluation.suggestions) + "</ul>"
             )
         return f"""
-        <section class="budget">
+        <section class="budget card">
           <h2>Budget</h2>
           <table>
             <tr><th>Category</th><th>Allocated</th><th>Actual</th><th>Status</th></tr>
             {rows}
           </table>
-          <p>Total: <b>${budget_evaluation.total_actual:,.0f}</b> of
-             ${budget_evaluation.total_allocated:,.0f} allocated
+          <p>Total: <b>{PDFGenerator._format_money(budget_evaluation.total_actual, currency)}</b> of
+             {PDFGenerator._format_money(budget_evaluation.total_allocated, currency)} allocated
              (budget adherence: <b>{adherence}</b>)</p>
           {suggestions_html}
         </section>
